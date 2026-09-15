@@ -1,0 +1,9 @@
+# Default owner for everything in the repository.
+* @raj1kshtz
+
+# Architectural decisions and the safety constraint require explicit review.
+/docs/adr/            @raj1kshtz
+/docs/design/         @raj1kshtz
+/internal/guard/      @raj1kshtz
+/.golangci.yml        @raj1kshtz
+/.github/workflows/   @raj1kshtz

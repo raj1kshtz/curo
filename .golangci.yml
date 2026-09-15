@@ -1,0 +1,86 @@
+# golangci-lint configuration for curo.
+#
+# This file is where ADR-0002 (host application inviolability) stops being a
+# promise and becomes a build failure. See docs/adr/0002-*.md.
+version: "2"
+
+run:
+  timeout: 5m
+  tests: true
+
+linters:
+  enable:
+    - bodyclose
+    - contextcheck
+    - copyloopvar
+    - durationcheck
+    - errorlint
+    - forbidigo
+    - gocritic
+    - goconst
+    - gosec
+    - makezero
+    - nilerr
+    - noctx
+    - prealloc
+    - predeclared
+    - revive
+    - unconvert
+    - unparam
+    - wastedassign
+
+  settings:
+    forbidigo:
+      # ADR-0002: none of these may appear in library code. All of them can kill
+      # or wedge the host process, and recover() cannot save the caller from any
+      # of them.
+      forbid:
+        - pattern: ^panic$
+          msg: "ADR-0002: curo must never panic in library code. Return an error and let the guard degrade to pass-through."
+        - pattern: ^os\.Exit$
+          msg: "ADR-0002: curo must never terminate the host process."
+        - pattern: ^log\.(Fatal|Fatalf|Fatalln|Panic|Panicf|Panicln)$
+          msg: "ADR-0002: log.Fatal/Panic terminates or unwinds the host process. Use the injected logger."
+        - pattern: ^time\.Sleep$
+          msg: "Use internal/clock so behaviour is testable and cancellable. Sleeping is not cancellable."
+        - pattern: ^fmt\.Print.*$
+          msg: "Never write to the host's stdout/stderr. Use the injected logger."
+      analyze-types: true
+
+    govet:
+      enable-all: true
+
+    gosec:
+      excludes:
+        - G404 # math/rand is correct and intentional for jitter; it is not a security control.
+
+    revive:
+      rules:
+        - name: exported
+          disabled: false
+
+  exclusions:
+    rules:
+      # Test code is allowed to panic, sleep and print.
+      - path: _test\.go
+        linters:
+          - forbidigo
+          - gosec
+          - goconst
+      # The fault-injection harness exists precisely to panic on purpose.
+      - path: internal/faultinject/
+        linters:
+          - forbidigo
+
+formatters:
+  enable:
+    - gofmt
+    - goimports
+  settings:
+    goimports:
+      local-prefixes:
+        - github.com/raj1kshtz/curo
+
+issues:
+  max-issues-per-linter: 0
+  max-same-issues: 0

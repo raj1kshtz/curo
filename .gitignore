@@ -1,0 +1,35 @@
+# Binaries
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+/bin/
+/dist/
+
+# Test & coverage
+*.test
+*.out
+coverage.*
+/testdata/fuzz/
+
+# Profiling
+*.prof
+*.pprof
+cpu.out
+mem.out
+
+# Go workspace
+go.work
+go.work.sum
+
+# Editors / OS
+.vscode/
+.idea/
+*.swp
+.DS_Store
+Thumbs.db
+
+# Local env
+.env
+.env.local

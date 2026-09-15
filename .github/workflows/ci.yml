@@ -1,0 +1,163 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: test (go ${{ matrix.go }}, ${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        go: ["1.23", "1.24", "1.25"]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ matrix.go }}
+          check-latest: true
+
+      - name: Verify go.mod is tidy
+        if: matrix.os == 'ubuntu-latest' && matrix.go == '1.25'
+        run: |
+          go mod tidy
+          git diff --exit-code -- go.mod go.sum
+
+      - name: Build
+        run: go build ./...
+
+      - name: Vet
+        run: go vet ./...
+
+      # -race is mandatory. curo lives in other people's concurrent programs.
+      - name: Test (race)
+        run: go test -race -count=1 -covermode=atomic -coverprofile=coverage.out ./...
+
+      - name: Fault injection harness
+        run: go test -race -count=1 -tags=faultinject ./...
+
+      - name: Upload coverage
+        if: matrix.os == 'ubuntu-latest' && matrix.go == '1.25'
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage
+          path: coverage.out
+
+  lint:
+    name: lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.25"
+      - name: golangci-lint
+        uses: golangci/golangci-lint-action@v6
+        with:
+          version: latest
+          args: --timeout=5m
+
+  vuln:
+    name: govulncheck
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.25"
+      - name: Run govulncheck
+        run: |
+          go install golang.org/x/vuln/cmd/govulncheck@latest
+          govulncheck ./...
+
+  fuzz:
+    name: fuzz (smoke)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.25"
+      - name: Short fuzz run over all targets
+        run: |
+          set -euo pipefail
+          targets=$(grep -rn --include='*_test.go' -oP 'func \KFuzz\w+' . || true)
+          if [ -z "$targets" ]; then echo "no fuzz targets yet"; exit 0; fi
+          for pkg in $(go list ./...); do
+            for t in $(go test -list 'Fuzz.*' "$pkg" 2>/dev/null | grep -E '^Fuzz' || true); do
+              echo "::group::$pkg $t"
+              go test -run "$t" -fuzz "^$t$" -fuzztime=30s "$pkg"
+              echo "::endgroup::"
+            done
+          done
+
+  bench:
+    name: benchmarks
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.25"
+      # The hot path is a public performance claim. Keep it measured.
+      - name: Run benchmarks
+        run: go test -run '^$' -bench . -benchmem ./... | tee bench.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: benchmarks
+          path: bench.txt
+
+  # Single required status check for branch protection. Matrix job names are
+  # dynamic ("test (go 1.25, ubuntu-latest)"), so protecting them individually is
+  # brittle — protect this gate instead and it stays correct as the matrix changes.
+  ci-success:
+    name: ci-success
+    runs-on: ubuntu-latest
+    needs: [test, lint, vuln, fuzz, bench, dco]
+    if: always()
+    steps:
+      - name: Fail if any dependency failed or was cancelled
+        run: |
+          echo "results: ${{ join(needs.*.result, ', ') }}"
+          if echo "${{ join(needs.*.result, ',') }}" | grep -qE 'failure|cancelled'; then
+            echo "::error::one or more required CI jobs did not succeed"
+            exit 1
+          fi
+
+  dco:
+    name: DCO sign-off
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Check Signed-off-by on every commit
+        run: |
+          set -euo pipefail
+          base="${{ github.event.pull_request.base.sha }}"
+          head="${{ github.event.pull_request.head.sha }}"
+          fail=0
+          for sha in $(git rev-list "$base..$head"); do
+            if [ "$(git show -s --format='%p' "$sha" | wc -w)" -gt 1 ]; then
+              continue  # skip merge commits
+            fi
+            if ! git show -s --format='%B' "$sha" | grep -qi '^Signed-off-by: .\+ <.\+@.\+>'; then
+              echo "::error::commit $sha is missing a Signed-off-by line (use: git commit -s)"
+              fail=1
+            fi
+          done
+          exit $fail

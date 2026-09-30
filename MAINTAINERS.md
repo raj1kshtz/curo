@@ -8,7 +8,7 @@ are made.
 
 | Name | GitHub | Areas |
 | ---- | ------ | ----- |
-| Raj  | [@raj1kshtz](https://github.com/raj1kshtz) | Project lead - engine, API, releases |
+| Raj | [@raj1kshtz](https://github.com/raj1kshtz) | Project lead - engine, API, releases |
 
 ## Emeritus maintainers
 

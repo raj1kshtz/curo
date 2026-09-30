@@ -21,9 +21,4 @@ changes will always be listed here under **Changed** or **Removed**.
 - Engine high-level design with reviewed context, component, runtime,
   containment, state-ownership, and mitigation-control diagrams.
 
-### Changed
-
-- Standardized Markdown on ASCII punctuation and added CI enforcement against
-  Unicode em dashes (`U+2014`).
-
 [Unreleased]: https://github.com/raj1kshtz/curo/commits/main

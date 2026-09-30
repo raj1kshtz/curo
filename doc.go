@@ -1,5 +1,5 @@
-// Package curo provides adaptive, fail-safe HTTP resilience for Go applications.
+// Package curo is the planned public package for an adaptive HTTP resilience
+// library.
 //
-// Curo is currently pre-alpha. Its public API is being designed in the open and
-// is not yet ready for production use.
+// Curo is currently in the design phase and has no supported runtime API.
 package curo

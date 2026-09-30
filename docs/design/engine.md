@@ -1,16 +1,20 @@
 # Curo Engine High-Level Design
 
-- **Status:** Current design for `v0.1.0`
+- **Status:** Design target for `v0.1.0`
 - **Updated:** 2026-09-30
 - **Scope:** Embedded Go engine for outbound `net/http` calls
 - **Audience:** Maintainers, contributors, reviewers, and adopters
 
+> [!NOTE]
+> This document describes intended architecture. The public API and runtime
+> packages have not been implemented yet.
+
 ## 1. Executive Summary
 
-Curo is an embedded Go resilience engine that wraps an application's outbound
-`http.RoundTripper`. It observes bounded transport evidence, produces an
-explainable diagnosis, and may apply a bounded mitigation when the instance is
-explicitly placed in `Enforce` mode.
+Curo is designed as an embedded Go resilience engine that wraps an
+application's outbound `http.RoundTripper`. It observes bounded transport
+evidence, produces an explainable diagnosis, and may apply a bounded mitigation
+when the instance is explicitly placed in `Enforce` mode.
 
 The engine is local to one host process. It does not depend on a sidecar,
 control plane, external data store, or third-party runtime module. Each Curo
@@ -25,7 +29,7 @@ side-effect state is unknown.
 
 ## 2. Governing Decisions
 
-This design implements the following accepted ADRs:
+This design is governed by the following accepted ADRs:
 
 - [ADR-0001](../adr/0001-embedded-library-over-sidecar-proxy.md):
   embedded Go library for `v0.x`.
@@ -73,7 +77,7 @@ The first engine does not provide:
 - Machine-learning policy.
 - Persistent adaptive state across process restarts.
 - Arbitrary workflow execution.
-- Exact public Go signatures, which are defined during the Day 5 API review.
+- Exact public Go signatures, which are defined during public API design.
 
 ## 5. Architectural Invariants
 
@@ -297,7 +301,7 @@ For each new request:
 11. Return the deterministically selected captured result.
 
 The exact result-selection rule across multiple completed attempts is part of
-the Day 5 public error and response contract.
+the public error and response contract.
 
 ## 9. Failure Containment
 
@@ -416,7 +420,7 @@ It does not perform network I/O or invoke a host-provided callback.
 
 `Close` cancels and joins the worker idempotently. It does not close the base
 transport. New requests after close must use a safe pass-through behavior; the
-exact public return contract is finalized during Day 5.
+exact public return contract remains a public API design decision.
 
 ## 11. Target Identity and Registry Admission
 
@@ -452,7 +456,7 @@ Registry admission follows these rules:
 5. High-cardinality input cannot churn established hot state continuously.
 
 Capacity and idle expiry are configuration bounds with conservative defaults.
-Exact values belong in the Day 5 option review.
+Exact values belong in the public configuration review.
 
 ## 12. Observation Model
 
@@ -507,8 +511,8 @@ The initial closed set is:
 | `ClientError` | Request-side failure that mitigation cannot repair |
 | `Degrading` | Sustained latency or error movement from baseline |
 
-The exact exported spelling belongs to Day 5. Internal policy must not invent
-unbounded diagnosis labels.
+The exact exported spelling belongs to public API design. Internal policy must
+not invent unbounded diagnosis labels.
 
 ### 13.3 Deterministic Rule Order
 
@@ -677,7 +681,7 @@ host-provided sink:
 - Is not called from the maintenance worker.
 - Is not given mutable internal state.
 
-The Day 5 API review chooses a pull or callback delivery contract. The core
+The public API review chooses a pull or callback delivery contract. The core
 must not create a goroutine per event.
 
 Internal failure logging is best effort and rate-limited. A logging failure
@@ -699,7 +703,7 @@ Construction:
 
 Invalid configuration must still leave the application with a safe way to use
 its original transport. The exact constructor return contract is decided
-during Day 5.
+during public API design.
 
 ### 17.2 Mode Change
 
@@ -872,7 +876,7 @@ The recommended adoption sequence is:
 Each process starts with cold local evidence after restart. There is no hidden
 state dependency on another process.
 
-## 23. Day 5 API Questions
+## 23. Open Public API Decisions
 
 The HLD intentionally leaves these public-contract questions for the
 compilable API review:
@@ -889,5 +893,5 @@ compilable API review:
 - Close and reset behavior visible to callers.
 - Exact defaults for capacity, expiry, windows, budgets, and timeouts.
 
-No implementation should begin until those signatures compile and are reviewed
-as the Day 5 LLD.
+These contracts must be reviewed as one coherent public API before runtime
+implementation begins.

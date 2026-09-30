@@ -2,54 +2,49 @@
 
 ## Supported versions
 
-`curo` is pre-`v1.0`. Until `v1.0.0`, only the latest released minor version receives
-security fixes.
+Curo has not published a release. Security reports against the current
+repository are welcome while the implementation is under development.
 
-| Version   | Supported |
-| --------- | --------- |
-| `v0.1.x`  | ✅ (once released) |
-| `< v0.1`  | ❌ pre-alpha, unreleased |
+After releases begin, the latest released minor version will receive security
+fixes until a broader support policy is published.
 
 ## Reporting a vulnerability
 
-**Please do not report security vulnerabilities through public issues.**
+Do not report security vulnerabilities through public issues.
 
-Report privately through
-[GitHub Security Advisories](https://github.com/raj1kshtz/curo/security/advisories/new).
-
-Please include:
+Use
+[GitHub Security Advisories](https://github.com/raj1kshtz/curo/security/advisories/new)
+to contact the maintainer privately. Include:
 
 - The affected version or commit.
 - A description of the issue and its impact.
-- Steps to reproduce, ideally a minimal Go program.
+- Steps to reproduce, ideally as a minimal Go program.
 - Any suggested mitigation.
 
-**Response targets:** acknowledgement within 3 working days; an initial assessment within
-10 working days; coordinated disclosure once a fix is available. We will credit you in the
-advisory unless you prefer otherwise.
+Reports will be assessed privately and coordinated disclosure will be arranged
+when a fix is available.
 
-## What counts as a vulnerability in curo
+## Security scope
 
-`curo` executes inside a host application and sits in the request path, so our threat
-model is broader than "can an attacker read memory".
+Curo is intended to execute inside a host application and participate in its
+outbound request path. Security-sensitive failures therefore include:
 
-We treat the following as security issues, not just bugs:
+- **Host compromise.** Input that makes Curo propagate a panic, deadlock, or
+  terminate the process.
+- **Unbounded resource growth.** Attacker-controlled input that causes
+  unbounded memory, state, or goroutine growth.
+- **Credential or payload leakage.** Bodies, authorization values, cookies, or
+  tokens appearing in logs, metrics, errors, or audit events.
+- **Request mutation or duplication.** A replayed request differs from the
+  caller's request, or an unsafe request is attempted more than once.
+- **Retry amplification.** Retry behavior exceeds its aggregate safety bounds.
 
-- **Host compromise.** Any input that makes `curo` panic out to the host, deadlock, or
-  exit the process. This violates
-  [ADR-0002](docs/adr/0002-host-application-inviolability.md).
-- **Unbounded resource growth.** Attacker-controlled input (URLs, headers, response
-  bodies, status codes) that causes unbounded memory or goroutine growth - for example by
-  exploding route cardinality.
-- **Credential or payload leakage.** Request/response bodies, `Authorization` headers,
-  cookies or tokens appearing in logs, metrics, error values or action hooks.
-- **Request smuggling or mutation.** Any case where a retried or replayed request differs
-  from what the caller constructed, or where a response is attributed to the wrong request.
-- **Retry amplification.** Any path where `curo` can be induced to bypass its retry budget
-  and amplify traffic against a third party.
+The governing safety requirements are recorded in
+[ADR-0002](docs/adr/0002-host-application-inviolability.md).
 
 ## Out of scope
 
-- Vulnerabilities in the host application's own code or in the services it calls.
-- Denial of service that requires the operator to deliberately misconfigure `curo`.
-- Findings against unreleased `main` that are already fixed on `main`.
+- Vulnerabilities in the host application's own code or its dependencies.
+- Denial of service that requires deliberate operator misconfiguration.
+- Reports for behavior that is described only in design documents and has not
+  been implemented.

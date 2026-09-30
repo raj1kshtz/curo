@@ -1,198 +1,101 @@
 # curo
 
-> **cūrō** _(Latin)_ - “I care for, I heal.”
+> From Latin *curo*: "I care for, I heal."
 
-**Self-healing HTTP resilience for Go.** `curo` watches your outbound calls, works out
-_why_ they are failing, and applies the right mitigation on its own - no thresholds to
-tune, no dashboards to watch, no human in the loop.
+`curo` is an experimental Go library for adaptive resilience around outbound
+HTTP calls. The project is exploring whether bounded runtime observations can
+support useful retry, breaker, and timeout decisions without requiring every
+application to tune static thresholds.
 
-[![Go Reference](https://pkg.go.dev/badge/github.com/raj1kshtz/curo.svg)](https://pkg.go.dev/github.com/raj1kshtz/curo)
-[![CI](https://github.com/raj1kshtz/curo/actions/workflows/ci.yml/badge.svg)](https://github.com/raj1kshtz/curo/actions/workflows/ci.yml)
-[![Go Report Card](https://goreportcard.com/badge/github.com/raj1kshtz/curo)](https://goreportcard.com/report/github.com/raj1kshtz/curo)
-[![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
+[![CI][ci-badge]][ci-workflow]
+[![License][license-badge]](LICENSE)
 
-> [!WARNING]
-> **Status: pre-alpha - design phase.** The API is being shaped in the open and will
-> change without notice until `v0.1.0`. Do not use in production yet.
-> Follow [`docs/adr/`](docs/adr/) to see how decisions are being made.
+> [!IMPORTANT]
+> Curo is in the design phase. There is no supported public API or release yet,
+> and the repository should not be used as a production dependency.
 
----
+## Current status
 
-## Why not just a circuit breaker?
+| Area | Status |
+| ---- | ------ |
+| Architecture decisions | Accepted and documented in [`docs/adr`](docs/adr/) |
+| Engine design | Documented in [`docs/design/engine.md`](docs/design/engine.md) |
+| Public Go API | Not yet defined |
+| Runtime implementation | Not yet implemented |
+| Examples and performance data | Added only after working code exists |
 
-Circuit breakers, retries and timeouts are solved problems. **Tuning them is not.**
-Every static threshold you hard-code is a guess about a production incident that has not
-happened yet - and it is wrong the moment traffic shape changes.
+The repository currently contains the package scaffold and design constraints
+that will guide implementation. Public documentation is updated as features
+become real, rather than documenting planned APIs as if they already exist.
 
-|                     | Static resilience libraries      | `curo`                                        |
-| ------------------- | -------------------------------- | --------------------------------------------- |
-| Thresholds          | You configure and re-tune them   | Learned continuously from observed behaviour   |
-| Failure response    | Identical for every failure      | Classified by cause, then matched to an action |
-| Retries             | Per-call counts - amplify brownouts into retry storms | A **budget** capped as a share of traffic |
-| Timeouts            | One fixed constant               | Derived from the route's own observed p99      |
-| Adoption risk       | A library bug becomes your outage | Fail-safe pass-through + self-disabling guard  |
+## Intended scope
 
-`curo` is not trying to replace [`gobreaker`](https://github.com/sony/gobreaker) or
-[`failsafe-go`](https://github.com/failsafe-go/failsafe-go) as a policy _executor_.
-It replaces the **human** who decides what the policy should be.
+The initial release is planned as an embedded Go library that explicitly wraps
+an application's `http.RoundTripper`. It is intentionally limited to outbound
+`net/http` traffic and process-local state.
 
----
+The design includes:
 
-## Install
+- `Off`, `Observe`, and `Enforce` operating modes.
+- Bounded observations and low-cardinality target identity.
+- Explainable diagnosis based on deterministic rules.
+- Aggregate retry budgets rather than per-request retry counts.
+- Adaptive breaker and timeout controls with hard safety bounds.
+- Fail-safe behavior for failures owned by Curo.
 
-```sh
-go get github.com/raj1kshtz/curo
-```
+The initial scope excludes sidecars, a control plane, non-Go SDKs, ingress
+middleware, gRPC interception, and machine-learning policy.
 
-The core has **zero third-party dependencies**. Integrations (OpenTelemetry, Prometheus)
-ship as separate Go modules so they never enter your dependency graph unless you ask.
+## Safety model
 
----
+Curo runs inside the application it is intended to protect. The primary design
+constraint is therefore host application inviolability:
 
-## Quick start
+- Curo-owned failures must not propagate into the host.
+- The original request must not be mutated.
+- An attempt with an unknown side effect must never be replayed blindly.
+- State, concurrency, cardinality, and mitigation work must remain bounded.
+- `Observe` is the default; behavior changes require explicit `Enforce`
+  authority.
+- The wrapped transport remains host-owned and keeps its existing panic
+  semantics.
 
-```go
-package main
+These are design requirements, not claims about code that has not been written.
+The full contract is recorded in
+[ADR-0002](docs/adr/0002-host-application-inviolability.md).
 
-import (
-	"log/slog"
-	"net/http"
+## Architecture
 
-	"github.com/raj1kshtz/curo"
-)
+![Curo system context](docs/design/diagrams/system-context.svg)
 
-func main() {
-	// h is ALWAYS non-nil and ALWAYS safe to use - even when err != nil.
-	h, err := curo.New(
-		curo.WithMode(curo.Observe), // the default; promote to Enforce once you trust it
-		curo.WithLogger(slog.Default()),
-	)
-	if err != nil {
-		// Advisory only. curo has already degraded itself to transparent pass-through.
-		// You never have to handle this to remain safe.
-		slog.Warn("curo degraded", "err", err)
-	}
-	defer h.Close()
+The [engine high-level design](docs/design/engine.md) describes component
+boundaries, runtime paths, failure containment, state ownership, mitigation
+controls, observability, and the test strategy expected from the implementation.
 
-	client := &http.Client{
-		Transport: h.Wrap(http.DefaultTransport),
-	}
+Architectural decisions are recorded separately so that rejected alternatives
+and long-term constraints remain reviewable. See the
+[ADR index](docs/adr/README.md).
 
-	resp, err := client.Get("https://api.example.com/v1/things")
-	_ = resp
-	_ = err
-}
-```
+## Implementation sequence
 
-That is the entire integration. One wrap on the transport you already have.
+The next milestones are:
 
----
-
-## Operating modes
-
-Adoption is staged on purpose. You get value on day one without granting `curo` any
-authority over your traffic.
-
-| Mode           | Observes | Acts | Use it when                                                  |
-| -------------- | :------: | :--: | ------------------------------------------------------------ |
-| `curo.Off`     |    ✗     |  ✗   | Kill switch. Behaves exactly like the transport you wrapped.  |
-| `curo.Observe` |    ✓     |  ✗   | **Default.** Full detection and diagnosis, zero intervention. |
-| `curo.Enforce` |    ✓     |  ✓   | You have reviewed the diagnoses and trust them.               |
-
-In `Observe`, `curo` reports every action it _would_ have taken. Run it in production
-on day one, read the findings for a week, then flip to `Enforce`.
-
-Modes are switchable at runtime - no restart, no redeploy:
-
-```go
-h.SetMode(curo.Off)
-```
-
----
-
-## The healer cannot break your application
-
-A library that fixes outages is worthless if it can cause them. `curo` is built around a
-single non-negotiable constraint, recorded in
-[ADR-0002](docs/adr/0002-host-application-inviolability.md):
-
-> **`curo` must never terminate, hang, or degrade the host process.** Any internal
-> failure degrades `curo` to a transparent pass-through - without operator action.
-
-How that is enforced:
-
-- **Panic containment** at every entry point, including _inside every goroutine_ `curo`
-  spawns (a parent `recover()` cannot catch those - the process would die).
-- **Self-disabling guard.** `curo` runs a circuit breaker over _its own_ internal error
-  rate. Enough internal faults and it permanently disarms itself. The healer heals itself.
-- **Pristine fallback.** The original `*http.Request` is never mutated; `curo`
-  works on a clone. Before an attempt starts, fallback may use the untouched
-  request exactly once. Once an attempt may have started, `curo` never blindly
-  replays it.
-- **No `panic`, `os.Exit` or `log.Fatal`** in library code - enforced by
-  [`forbidigo`](.golangci.yml) in CI, not by discipline.
-- **Bounded everything.** Ring buffers and capped route cardinality. No
-  unbounded map keyed by URL. Lifecycle and resource-bound tests verify that
-  shutdown does not leak goroutines.
-- **No `init()` side effects.** `curo` never touches `http.DefaultTransport` or any
-  global you did not hand it.
-
-This is a claim we test rather than assert: a fault-injection harness randomly panics
-inside every internal component and asserts that the host survives **and the request
-still succeeds**.
-
----
-
-## How it works
-
-```
-                  ┌──────────────────── guard (panic containment, self-disable) ────────────────────┐
-                  │                                                                                 │
-  http.Request ──▶│  detect ──▶ diagnose ──▶ policy ──▶ mitigate ──▶ base http.RoundTripper         │──▶ http.Response
-                  │  (rolling   (classify   (choose    (retry /                                     │
-                  │   windows)   cause)      action)    breaker /                                   │
-                  │                                     timeout)                                    │
-                  └─────────────────────────────────────────────────────────────────────────────────┘
-                                       any failure in here ──▶ transparent pass-through
-```
-
-1. **Detect** - per-route rolling windows track error rate, latency EWMA, p99, timeout
-   rate and in-flight count. Fixed memory per route, capped route cardinality.
-2. **Diagnose** - the signal is classified into a small closed set of causes:
-   `Healthy`, `Transient`, `DependencyDown`, `Saturation`, `ClientError`, `Degrading`.
-3. **Mitigate** - the diagnosis selects the mitigation. A `ClientError` is never retried.
-   `Saturation` sheds load rather than adding to it. `DependencyDown` opens the breaker
-   and fails fast.
-
-Every autonomous decision is auditable through the `OnAction` hook and exported metrics.
-`curo` is never allowed to be a black box.
-
-Full detail: [`docs/design/engine.md`](docs/design/engine.md).
-
----
-
-## Roadmap
-
-**v0.1.0 (MVP)** - egress `http.RoundTripper`, guard layer, three modes, adaptive retry
-budgets, adaptive breaker, adaptive timeouts, `OnAction` auditing.
-
-**Deliberately out of scope for v0.1** - control plane, ingress middleware, gRPC,
-fallback caching, distributed/shared state, anything ML.
-See [ADR-0001](docs/adr/0001-embedded-library-over-sidecar-proxy.md) for why.
-
----
+1. Define a small compilable public API.
+2. Implement guarded pass-through behavior.
+3. Add bounded observation and diagnosis.
+4. Introduce mitigation controls with tests and benchmarks.
+5. Publish examples only after they compile against the real API.
 
 ## Contributing
 
-Contributions are very welcome - especially adversarial ones. If you can make `curo`
-panic, hang, or leak inside a host application, that is the most valuable issue you can file.
-
-Start with [`CONTRIBUTING.md`](CONTRIBUTING.md) and the
-[Architecture Decision Records](docs/adr/). Discussion happens in the open on the issue
-tracker; please open an issue before a large PR.
-
----
+Design feedback is welcome, especially around failure semantics, replay safety,
+and bounded concurrency. Please read [CONTRIBUTING.md](CONTRIBUTING.md) before
+proposing an implementation or changing an accepted architectural decision.
 
 ## License
 
-[Apache License 2.0](LICENSE) - chosen for its explicit patent grant.
+[Apache License 2.0](LICENSE).
+
+[ci-badge]: https://github.com/raj1kshtz/curo/actions/workflows/ci.yml/badge.svg
+[ci-workflow]: https://github.com/raj1kshtz/curo/actions/workflows/ci.yml
+[license-badge]: https://img.shields.io/badge/license-Apache--2.0-blue.svg

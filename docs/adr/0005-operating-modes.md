@@ -75,17 +75,17 @@ configured mode is `Observe` or `Enforce`.
 
 ## Options Considered
 
-1. **Off, Observe, and Enforce — selected.**
+1. **Off, Observe, and Enforce - selected.**
    - Strengths: separates visibility from authority and supports staged
      adoption.
    - Weaknesses: adds state transitions and mode-specific testing.
-2. **Enabled or disabled boolean — rejected.**
+2. **Enabled or disabled boolean - rejected.**
    - Strengths: minimal API and implementation.
    - Weaknesses: cannot evaluate decisions safely before granting authority.
-3. **Always observe and enforce automatically — rejected.**
+3. **Always observe and enforce automatically - rejected.**
    - Strengths: simplest user experience.
    - Weaknesses: unacceptable adoption risk and no explicit consent boundary.
-4. **Configuration-time mode only — rejected.**
+4. **Configuration-time mode only - rejected.**
    - Strengths: immutable runtime configuration.
    - Weaknesses: incident response requires an application restart or
      redeployment.

@@ -74,19 +74,19 @@ exercise the public contract independently of internal tests.
 
 ## Options Considered
 
-1. **Root public package plus `/internal` implementation — selected.**
+1. **Root public package plus `/internal` implementation - selected.**
    - Strengths: idiomatic import, compiler-enforced boundaries, and minimal
      public surface.
    - Weaknesses: the root package needs discipline to avoid becoming crowded.
-2. **Public packages under `/pkg` — rejected.**
+2. **Public packages under `/pkg` - rejected.**
    - Strengths: visually separates reusable code in a binary-oriented
      monorepo.
    - Weaknesses: unnecessary for a library and encourages extra public
      packages.
-3. **Expose engine subsystems as public subpackages — rejected for `v0.x`.**
+3. **Expose engine subsystems as public subpackages - rejected for `v0.x`.**
    - Strengths: advanced users can compose low-level pieces.
    - Weaknesses: freezes internal abstractions before the engine is validated.
-4. **Put most implementation in the root package — rejected.**
+4. **Put most implementation in the root package - rejected.**
    - Strengths: fewer packages and no internal import graph.
    - Weaknesses: obscures boundaries and increases accidental exported API.
 

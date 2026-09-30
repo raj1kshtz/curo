@@ -8,7 +8,7 @@ deliberately lightweight for the project's current size and will grow as the com
 1. **Community over code.** A technically excellent patch that nobody can maintain is a
    liability. Reviewability and clear reasoning beat cleverness.
 2. **If it did not happen in public, it did not happen.** Design discussion, decisions and
-   rationale live on the issue tracker and in [ADRs](docs/adr/) — never in private DMs.
+   rationale live on the issue tracker and in [ADRs](docs/adr/) - never in private DMs.
 3. **Decisions are recorded, not remembered.** Every architectural decision becomes an ADR,
    including the options we rejected and why.
 4. **Merit, not tenure.** Influence is earned through sustained, high-quality contribution.
@@ -16,15 +16,15 @@ deliberately lightweight for the project's current size and will grow as the com
 ## Current structure
 
 The project is in its founding phase and is currently maintained by a single maintainer
-(see [MAINTAINERS.md](MAINTAINERS.md)). This is a stage, not an end state — the structure
+(see [MAINTAINERS.md](MAINTAINERS.md)). This is a stage, not an end state - the structure
 below describes where we are heading.
 
 ## Roles
 
-**Contributor** — anyone who opens an issue, reviews a PR, improves docs, or submits code.
+**Contributor** - anyone who opens an issue, reviews a PR, improves docs, or submits code.
 No formal process; just participate.
 
-**Maintainer** — has write access; reviews and merges PRs; shepherds releases.
+**Maintainer** - has write access; reviews and merges PRs; shepherds releases.
 Nominated by an existing maintainer after a track record of sustained, high-quality
 contribution and good judgement about the project's safety constraints. Confirmed by lazy
 consensus among existing maintainers.
@@ -49,7 +49,7 @@ Objections must be technical and must come with reasoning. "I do not like it" is
 objection; "this can deadlock when X" is.
 
 Anyone may call for a vote if consensus cannot be reached. Votes follow the Apache
-convention: `+1` (agree), `0` (abstain), `-1` (object — **must** include reasoning and,
+convention: `+1` (agree), `0` (abstain), `-1` (object - **must** include reasoning and,
 where possible, an alternative). Maintainer votes are binding; all others are advisory
 and genuinely welcomed.
 

@@ -59,18 +59,18 @@ the repository to preserve the zero-dependency claim is prohibited.
 
 ## Options Considered
 
-1. **Standard-library-only root plus separate integration modules — selected.**
+1. **Standard-library-only root plus separate integration modules - selected.**
    - Strengths: smallest consumer graph, clear ownership, and independent
      integration upgrades.
    - Weaknesses: multiple module files, release coordination, and more CI.
-2. **Allow selected dependencies in the root module — rejected.**
+2. **Allow selected dependencies in the root module - rejected.**
    - Strengths: less code to maintain and faster access to mature utilities.
    - Weaknesses: conflicts and transitive risk are imposed on every user.
-3. **Hide optional dependencies behind build tags — rejected.**
+3. **Hide optional dependencies behind build tags - rejected.**
    - Strengths: one module and conditional compilation.
    - Weaknesses: dependencies remain in `go.mod`, and build combinations add
      support complexity.
-4. **Copy small third-party implementations into Curo — rejected.**
+4. **Copy small third-party implementations into Curo - rejected.**
    - Strengths: no module requirement.
    - Weaknesses: obscured provenance, licensing risk, and forked maintenance.
 

@@ -39,7 +39,7 @@ We treat the following as security issues, not just bugs:
   exit the process. This violates
   [ADR-0002](docs/adr/0002-host-application-inviolability.md).
 - **Unbounded resource growth.** Attacker-controlled input (URLs, headers, response
-  bodies, status codes) that causes unbounded memory or goroutine growth — for example by
+  bodies, status codes) that causes unbounded memory or goroutine growth - for example by
   exploding route cardinality.
 - **Credential or payload leakage.** Request/response bodies, `Authorization` headers,
   cookies or tokens appearing in logs, metrics, error values or action hooks.

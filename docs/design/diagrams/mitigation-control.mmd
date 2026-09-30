@@ -1,0 +1,61 @@
+---
+config:
+  theme: base
+  layout: dagre
+  flowchart:
+    curve: linear
+    nodeSpacing: 34
+    rankSpacing: 48
+    htmlLabels: true
+  themeVariables:
+    fontFamily: "Inter, ui-sans-serif, system-ui, sans-serif"
+    fontSize: "15px"
+    lineColor: "#64748B"
+    textColor: "#0F172A"
+---
+flowchart TB
+  subgraph retry["Retry control"]
+    direction LR
+    rt1["Retry candidate<br/>Transient diagnosis"]:::analysis
+    rt2["Eligibility gates<br/>Replay, context, breaker"]:::safety
+    rt3["Atomic budget acquisition<br/>Target and instance"]:::state
+    rt4["Cancellable backoff<br/>Bounded jitter"]:::mitigation
+    rt5["Bounded attempt<br/>Hard safety ceiling"]:::external
+    rt1 --> rt2 --> rt3 --> rt4 --> rt5
+  end
+
+  subgraph breaker["Breaker control"]
+    direction LR
+    br1["Closed<br/>Observe normal attempts"]:::state
+    br2["Open<br/>Bounded fail-fast interval"]:::mitigation
+    br3["Probe lease<br/>Limited concurrent probes"]:::safety
+    br4["Probe success<br/>Return to closed"]:::state
+    br5["Probe failure<br/>Start capped cooldown"]:::mitigation
+    br1 --> br2 --> br3
+    br3 --> br4
+    br3 --> br5
+  end
+
+  subgraph timeout["Adaptive timeout control"]
+    direction LR
+    to1["Ready latency evidence<br/>Bounded histogram"]:::analysis
+    to2["Timeout candidate<br/>Quantile and margin"]:::analysis
+    to3["Safety bounds<br/>Floor and ceiling"]:::safety
+    to4["Caller deadline<br/>Never extend it"]:::api
+    to5["Attempt context<br/>Curo timeout source tagged"]:::mitigation
+    to1 --> to2 --> to3 --> to4 --> to5
+  end
+
+  retry ~~~ breaker
+  breaker ~~~ timeout
+
+  classDef external fill:#F1F5F9,stroke:#475569,color:#0F172A,stroke-width:2px
+  classDef api fill:#DBEAFE,stroke:#2563EB,color:#0F172A,stroke-width:2px
+  classDef safety fill:#FFE4E6,stroke:#E11D48,color:#0F172A,stroke-width:2px
+  classDef analysis fill:#EDE9FE,stroke:#7C3AED,color:#0F172A,stroke-width:2px
+  classDef mitigation fill:#FEF3C7,stroke:#D97706,color:#0F172A,stroke-width:2px
+  classDef state fill:#CCFBF1,stroke:#0F766E,color:#0F172A,stroke-width:2px
+
+  style retry fill:#FFFBEB,stroke:#FCD34D,color:#0F172A,stroke-width:2px
+  style breaker fill:#FFF7ED,stroke:#FDBA74,color:#0F172A,stroke-width:2px
+  style timeout fill:#F5F3FF,stroke:#C4B5FD,color:#0F172A,stroke-width:2px

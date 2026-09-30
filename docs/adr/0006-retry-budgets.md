@@ -74,18 +74,18 @@ these invariants.
 
 ## Options Considered
 
-1. **Rolling aggregate retry budgets — selected.**
+1. **Rolling aggregate retry budgets - selected.**
    - Strengths: bounds fleet pressure at the process level and adapts to
      traffic volume.
    - Weaknesses: concurrent accounting, fairness, and low-volume behavior are
      more complex.
-2. **Fixed retry count per request — rejected as the primary policy.**
+2. **Fixed retry count per request - rejected as the primary policy.**
    - Strengths: familiar and easy to implement.
    - Weaknesses: aggregate amplification grows directly with failing traffic.
-3. **Never retry — rejected.**
+3. **Never retry - rejected.**
    - Strengths: cannot amplify dependency load or duplicate a request.
    - Weaknesses: gives up safe recovery from transient failures.
-4. **Leave retries entirely to the application — deferred as an escape hatch.**
+4. **Leave retries entirely to the application - deferred as an escape hatch.**
    - Strengths: application code knows business semantics.
    - Weaknesses: cannot provide autonomous mitigation or shared load bounds.
 

@@ -125,13 +125,50 @@ jobs:
           name: benchmarks
           path: bench.txt
 
+  docs:
+    name: docs-style
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Reject Unicode em dashes in Markdown
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import subprocess
+          import sys
+
+          paths = subprocess.check_output(
+              ["git", "ls-files", "*.md"],
+              text=True,
+          ).splitlines()
+
+          failures = []
+          for name in paths:
+              path = Path(name)
+              for number, line in enumerate(
+                  path.read_text(encoding="utf-8").splitlines(),
+                  start=1,
+              ):
+                  if "\u2014" in line:
+                      failures.append((name, number))
+
+          for name, number in failures:
+              print(
+                  f"::error file={name},line={number}::"
+                  "Markdown must not contain U+2014 em dashes"
+              )
+
+          sys.exit(1 if failures else 0)
+          PY
+
   # Single required status check for branch protection. Matrix job names are
   # dynamic ("test (go 1.25, ubuntu-latest)"), so protecting them individually is
   # brittle — protect this gate instead and it stays correct as the matrix changes.
   ci-success:
     name: ci-success
     runs-on: ubuntu-latest
-    needs: [test, lint, vuln, fuzz, bench, dco]
+    needs: [test, lint, vuln, fuzz, bench, docs, dco]
     if: always()
     steps:
       - name: Fail if any dependency failed or was cancelled

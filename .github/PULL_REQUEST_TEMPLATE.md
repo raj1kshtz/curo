@@ -1,6 +1,6 @@
 <!--
 Thanks for contributing to curo!
-Please make sure an issue exists for anything beyond a trivial fix — see CONTRIBUTING.md.
+Please make sure an issue exists for anything beyond a trivial fix - see CONTRIBUTING.md.
 -->
 
 ## What does this change?
@@ -33,6 +33,7 @@ Fixes #<!-- issue number -->
 ## Housekeeping
 
 - [ ] Commits follow [Conventional Commits](https://www.conventionalcommits.org/)
-- [ ] Commits are signed off (`git commit -s`) — DCO
+- [ ] Commits are signed off (`git commit -s`) - DCO
+- [ ] Markdown uses ASCII punctuation and contains no `U+2014` em dashes
 - [ ] Docs / ADRs updated in this PR
 - [ ] `CHANGELOG.md` updated under `[Unreleased]`

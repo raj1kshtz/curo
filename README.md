@@ -1,9 +1,9 @@
 # curo
 
-> **cūrō** _(Latin)_ — “I care for, I heal.”
+> **cūrō** _(Latin)_ - “I care for, I heal.”
 
 **Self-healing HTTP resilience for Go.** `curo` watches your outbound calls, works out
-_why_ they are failing, and applies the right mitigation on its own — no thresholds to
+_why_ they are failing, and applies the right mitigation on its own - no thresholds to
 tune, no dashboards to watch, no human in the loop.
 
 [![Go Reference](https://pkg.go.dev/badge/github.com/raj1kshtz/curo.svg)](https://pkg.go.dev/github.com/raj1kshtz/curo)
@@ -12,7 +12,7 @@ tune, no dashboards to watch, no human in the loop.
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 
 > [!WARNING]
-> **Status: pre-alpha — design phase.** The API is being shaped in the open and will
+> **Status: pre-alpha - design phase.** The API is being shaped in the open and will
 > change without notice until `v0.1.0`. Do not use in production yet.
 > Follow [`docs/adr/`](docs/adr/) to see how decisions are being made.
 
@@ -22,13 +22,13 @@ tune, no dashboards to watch, no human in the loop.
 
 Circuit breakers, retries and timeouts are solved problems. **Tuning them is not.**
 Every static threshold you hard-code is a guess about a production incident that has not
-happened yet — and it is wrong the moment traffic shape changes.
+happened yet - and it is wrong the moment traffic shape changes.
 
 |                     | Static resilience libraries      | `curo`                                        |
 | ------------------- | -------------------------------- | --------------------------------------------- |
 | Thresholds          | You configure and re-tune them   | Learned continuously from observed behaviour   |
 | Failure response    | Identical for every failure      | Classified by cause, then matched to an action |
-| Retries             | Per-call counts — amplify brownouts into retry storms | A **budget** capped as a share of traffic |
+| Retries             | Per-call counts - amplify brownouts into retry storms | A **budget** capped as a share of traffic |
 | Timeouts            | One fixed constant               | Derived from the route's own observed p99      |
 | Adoption risk       | A library bug becomes your outage | Fail-safe pass-through + self-disabling guard  |
 
@@ -62,7 +62,7 @@ import (
 )
 
 func main() {
-	// h is ALWAYS non-nil and ALWAYS safe to use — even when err != nil.
+	// h is ALWAYS non-nil and ALWAYS safe to use - even when err != nil.
 	h, err := curo.New(
 		curo.WithMode(curo.Observe), // the default; promote to Enforce once you trust it
 		curo.WithLogger(slog.Default()),
@@ -102,7 +102,7 @@ authority over your traffic.
 In `Observe`, `curo` reports every action it _would_ have taken. Run it in production
 on day one, read the findings for a week, then flip to `Enforce`.
 
-Modes are switchable at runtime — no restart, no redeploy:
+Modes are switchable at runtime - no restart, no redeploy:
 
 ```go
 h.SetMode(curo.Off)
@@ -117,19 +117,19 @@ single non-negotiable constraint, recorded in
 [ADR-0002](docs/adr/0002-host-application-inviolability.md):
 
 > **`curo` must never terminate, hang, or degrade the host process.** Any internal
-> failure degrades `curo` to a transparent pass-through — without operator action.
+> failure degrades `curo` to a transparent pass-through - without operator action.
 
 How that is enforced:
 
 - **Panic containment** at every entry point, including _inside every goroutine_ `curo`
-  spawns (a parent `recover()` cannot catch those — the process would die).
+  spawns (a parent `recover()` cannot catch those - the process would die).
 - **Self-disabling guard.** `curo` runs a circuit breaker over _its own_ internal error
   rate. Enough internal faults and it permanently disarms itself. The healer heals itself.
 - **Pristine fallback.** The original `*http.Request` is never mutated; `curo`
   works on a clone. Before an attempt starts, fallback may use the untouched
   request exactly once. Once an attempt may have started, `curo` never blindly
   replays it.
-- **No `panic`, `os.Exit` or `log.Fatal`** in library code — enforced by
+- **No `panic`, `os.Exit` or `log.Fatal`** in library code - enforced by
   [`forbidigo`](.golangci.yml) in CI, not by discipline.
 - **Bounded everything.** Ring buffers and capped route cardinality. No
   unbounded map keyed by URL. Lifecycle and resource-bound tests verify that
@@ -156,11 +156,11 @@ still succeeds**.
                                        any failure in here ──▶ transparent pass-through
 ```
 
-1. **Detect** — per-route rolling windows track error rate, latency EWMA, p99, timeout
+1. **Detect** - per-route rolling windows track error rate, latency EWMA, p99, timeout
    rate and in-flight count. Fixed memory per route, capped route cardinality.
-2. **Diagnose** — the signal is classified into a small closed set of causes:
+2. **Diagnose** - the signal is classified into a small closed set of causes:
    `Healthy`, `Transient`, `DependencyDown`, `Saturation`, `ClientError`, `Degrading`.
-3. **Mitigate** — the diagnosis selects the mitigation. A `ClientError` is never retried.
+3. **Mitigate** - the diagnosis selects the mitigation. A `ClientError` is never retried.
    `Saturation` sheds load rather than adding to it. `DependencyDown` opens the breaker
    and fails fast.
 
@@ -173,10 +173,10 @@ Full detail: [`docs/design/engine.md`](docs/design/engine.md).
 
 ## Roadmap
 
-**v0.1.0 (MVP)** — egress `http.RoundTripper`, guard layer, three modes, adaptive retry
+**v0.1.0 (MVP)** - egress `http.RoundTripper`, guard layer, three modes, adaptive retry
 budgets, adaptive breaker, adaptive timeouts, `OnAction` auditing.
 
-**Deliberately out of scope for v0.1** — control plane, ingress middleware, gRPC,
+**Deliberately out of scope for v0.1** - control plane, ingress middleware, gRPC,
 fallback caching, distributed/shared state, anything ML.
 See [ADR-0001](docs/adr/0001-embedded-library-over-sidecar-proxy.md) for why.
 
@@ -184,7 +184,7 @@ See [ADR-0001](docs/adr/0001-embedded-library-over-sidecar-proxy.md) for why.
 
 ## Contributing
 
-Contributions are very welcome — especially adversarial ones. If you can make `curo`
+Contributions are very welcome - especially adversarial ones. If you can make `curo`
 panic, hang, or leak inside a host application, that is the most valuable issue you can file.
 
 Start with [`CONTRIBUTING.md`](CONTRIBUTING.md) and the
@@ -195,4 +195,4 @@ tracker; please open an issue before a large PR.
 
 ## License
 
-[Apache License 2.0](LICENSE) — chosen for its explicit patent grant.
+[Apache License 2.0](LICENSE) - chosen for its explicit patent grant.

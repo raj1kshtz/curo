@@ -12,7 +12,7 @@ everyone. A PR that arrives without a prior issue may be asked to go back to dis
 which wastes your time.
 
 If your change alters an architectural decision, it needs an
-[ADR](docs/adr/README.md) — not just code.
+[ADR](docs/adr/README.md) - not just code.
 
 ## The one rule that is not negotiable
 
@@ -25,14 +25,14 @@ Concretely, in all non-test library code:
 
 - **Never** call `panic`, `os.Exit`, or `log.Fatal*`. CI enforces this via `forbidigo`.
 - **Every goroutine** `curo` spawns must have `defer recover()` as its *first* statement.
-  A `recover()` on the parent stack cannot catch a panic in a child goroutine — the whole
+  A `recover()` on the parent stack cannot catch a panic in a child goroutine - the whole
   process dies. There are no exceptions to this rule.
 - **Never** hold a lock across I/O. Every internal wait must be `context`-bounded.
   A hang is treated as exactly as severe as a panic, because it is worse in production.
 - **Never** use a bare `map` reachable from more than one goroutine. A concurrent
-  map read/write is a `fatal error`, not a panic — `recover()` cannot save you.
+  map read/write is a `fatal error`, not a panic - `recover()` cannot save you.
 - **All state must be bounded.** Ring buffers, capped cardinality. Never
-  `map[string]*state` keyed by a raw URL — that is a memory leak with extra steps.
+  `map[string]*state` keyed by a raw URL - that is a memory leak with extra steps.
 - **No `init()` side effects**, no mutation of `http.DefaultTransport`, no global registries.
 
 ## Development
@@ -53,7 +53,16 @@ go test -tags=faultinject ./...                     # chaos harness
 ```
 
 Time-dependent code **must** use the injectable clock in `internal/clock`. Tests that
-call `time.Sleep` to wait for behaviour will be rejected — they are flaky by construction.
+call `time.Sleep` to wait for behaviour will be rejected - they are flaky by construction.
+
+## Documentation
+
+- Use ASCII punctuation in Markdown. Do not use Unicode em dashes (`U+2014`);
+  use a hyphen, comma, colon, or parentheses instead.
+- Keep architecture diagram sources and rendered SVGs synchronized. Rendering
+  instructions live in
+  [`docs/design/diagrams/README.md`](docs/design/diagrams/README.md).
+- Update related ADRs and the changelog in the same pull request.
 
 ## Commits
 
@@ -87,6 +96,7 @@ it under the Apache-2.0 licence. There is no CLA.
 - Update docs and ADRs in the same PR as the behaviour change.
 - Keep the public API surface as small as you can. Anything exported is a compatibility
   promise; prefer `internal/`.
+- Keep Markdown free of Unicode em dashes (`U+2014`).
 - CI must be green. Maintainers will not merge a red build.
 
 ## Reporting security issues

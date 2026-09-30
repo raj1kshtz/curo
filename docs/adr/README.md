@@ -9,19 +9,19 @@ together. Code and API documentation define the exact implementation.
 
 ## Decision Index
 
-1. **ADR-0001 — Accepted**
+1. **ADR-0001 - Accepted**
    [Use an Embedded Go Library for the Initial Product](0001-embedded-library-over-sidecar-proxy.md)
-2. **ADR-0002 — Accepted**
+2. **ADR-0002 - Accepted**
    [Guarantee Host Application Inviolability](0002-host-application-inviolability.md)
-3. **ADR-0003 — Accepted**
+3. **ADR-0003 - Accepted**
    [Prefer Adaptive Policies Over Static Thresholds](0003-adaptive-policies-over-static-configuration.md)
-4. **ADR-0004 — Accepted**
+4. **ADR-0004 - Accepted**
    [Keep the Core Module Free of Third-Party Dependencies](0004-zero-dependency-core.md)
-5. **ADR-0005 — Accepted**
+5. **ADR-0005 - Accepted**
    [Use Off, Observe, and Enforce Operating Modes](0005-operating-modes.md)
-6. **ADR-0006 — Accepted**
+6. **ADR-0006 - Accepted**
    [Govern Retries with Aggregate Budgets](0006-retry-budgets.md)
-7. **ADR-0007 — Accepted**
+7. **ADR-0007 - Accepted**
    [Expose the Public API at the Module Root](0007-root-api-and-internal-packages.md)
 
 ## Lifecycle

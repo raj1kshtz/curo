@@ -23,9 +23,9 @@ what is excluded, and any invariants implementations must preserve.
 
 ## Options Considered
 
-1. **Selected option — selected.**
+1. **Selected option - selected.**
    Describe its relevant strengths and weaknesses.
-2. **Alternative option — rejected or deferred.**
+2. **Alternative option - rejected or deferred.**
    Explain why it does not fit the current constraints.
 
 ## Consequences

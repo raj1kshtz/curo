@@ -14,7 +14,9 @@ changes will always be listed here under **Changed** or **Removed**.
 
 - Project foundation: Apache-2.0 licence, contribution guide, code of conduct, security
   policy, governance model and CI pipeline.
-- Architecture Decision Records `0001`–`0003` covering the embedded Go library,
-  host application inviolability, and adaptive policy model.
+- ADR lifecycle and authoring guidance, plus Architecture Decision Records
+  `0001`–`0007` covering the embedded Go library, host application
+  inviolability, adaptive policy, dependencies, operating modes, retry
+  budgets, and package boundaries.
 
 [Unreleased]: https://github.com/raj1kshtz/curo/commits/main

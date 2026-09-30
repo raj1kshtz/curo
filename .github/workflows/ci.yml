@@ -21,17 +21,18 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, windows-latest, macos-latest]
-        go: ["1.23", "1.24", "1.25"]
+        go: ["1.23", "1.24", "1.25", "1.26"]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v7
         with:
           go-version: ${{ matrix.go }}
           check-latest: true
+          cache: false
 
       - name: Verify go.mod is tidy
-        if: matrix.os == 'ubuntu-latest' && matrix.go == '1.25'
+        if: matrix.os == 'ubuntu-latest' && matrix.go == '1.26'
         run: |
           go mod tidy
           git diff --exit-code -- go.mod go.sum
@@ -44,14 +45,14 @@ jobs:
 
       # -race is mandatory. curo lives in other people's concurrent programs.
       - name: Test (race)
-        run: go test -race -count=1 -covermode=atomic -coverprofile=coverage.out ./...
+        run: go test -race -count=1 -covermode atomic -coverprofile coverage.out ./...
 
       - name: Fault injection harness
         run: go test -race -count=1 -tags=faultinject ./...
 
       - name: Upload coverage
-        if: matrix.os == 'ubuntu-latest' && matrix.go == '1.25'
-        uses: actions/upload-artifact@v4
+        if: matrix.os == 'ubuntu-latest' && matrix.go == '1.26'
+        uses: actions/upload-artifact@v7
         with:
           name: coverage
           path: coverage.out
@@ -60,37 +61,40 @@ jobs:
     name: lint
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
         with:
-          go-version: "1.25"
+          go-version: "1.26"
+          cache: false
       - name: golangci-lint
-        uses: golangci/golangci-lint-action@v6
+        uses: golangci/golangci-lint-action@v9
         with:
-          version: latest
+          version: v2.14.0
           args: --timeout=5m
 
   vuln:
     name: govulncheck
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
         with:
-          go-version: "1.25"
+          go-version: "1.26"
+          cache: false
       - name: Run govulncheck
         run: |
-          go install golang.org/x/vuln/cmd/govulncheck@latest
+          go install golang.org/x/vuln/cmd/govulncheck@v1.8.0
           govulncheck ./...
 
   fuzz:
     name: fuzz (smoke)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
         with:
-          go-version: "1.25"
+          go-version: "1.26"
+          cache: false
       - name: Short fuzz run over all targets
         run: |
           set -euo pipefail
@@ -108,14 +112,15 @@ jobs:
     name: benchmarks
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
         with:
-          go-version: "1.25"
+          go-version: "1.26"
+          cache: false
       # The hot path is a public performance claim. Keep it measured.
       - name: Run benchmarks
         run: go test -run '^$' -bench . -benchmem ./... | tee bench.txt
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: benchmarks
           path: bench.txt
@@ -142,7 +147,7 @@ jobs:
     runs-on: ubuntu-latest
     if: github.event_name == 'pull_request'
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
       - name: Check Signed-off-by on every commit

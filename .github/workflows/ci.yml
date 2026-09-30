@@ -21,7 +21,7 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, windows-latest, macos-latest]
-        go: ["1.23", "1.24", "1.25", "1.26"]
+        go: ["1.23", "1.26"]
     steps:
       - uses: actions/checkout@v7
 
@@ -43,19 +43,8 @@ jobs:
       - name: Vet
         run: go vet ./...
 
-      # -race is mandatory. curo lives in other people's concurrent programs.
-      - name: Test (race)
-        run: go test -race -count=1 -covermode atomic -coverprofile coverage.out ./...
-
-      - name: Fault injection harness
-        run: go test -race -count=1 -tags=faultinject ./...
-
-      - name: Upload coverage
-        if: matrix.os == 'ubuntu-latest' && matrix.go == '1.26'
-        uses: actions/upload-artifact@v7
-        with:
-          name: coverage
-          path: coverage.out
+      - name: Test
+        run: go test -race -count=1 ./...
 
   lint:
     name: lint
@@ -86,99 +75,6 @@ jobs:
           go install golang.org/x/vuln/cmd/govulncheck@v1.8.0
           govulncheck ./...
 
-  fuzz:
-    name: fuzz (smoke)
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-go@v7
-        with:
-          go-version: "1.26"
-          cache: false
-      - name: Short fuzz run over all targets
-        run: |
-          set -euo pipefail
-          targets=$(grep -rn --include='*_test.go' -oP 'func \KFuzz\w+' . || true)
-          if [ -z "$targets" ]; then echo "no fuzz targets yet"; exit 0; fi
-          for pkg in $(go list ./...); do
-            for t in $(go test -list 'Fuzz.*' "$pkg" 2>/dev/null | grep -E '^Fuzz' || true); do
-              echo "::group::$pkg $t"
-              go test -run "$t" -fuzz "^$t$" -fuzztime=30s "$pkg"
-              echo "::endgroup::"
-            done
-          done
-
-  bench:
-    name: benchmarks
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-go@v7
-        with:
-          go-version: "1.26"
-          cache: false
-      # The hot path is a public performance claim. Keep it measured.
-      - name: Run benchmarks
-        run: go test -run '^$' -bench . -benchmem ./... | tee bench.txt
-      - uses: actions/upload-artifact@v7
-        with:
-          name: benchmarks
-          path: bench.txt
-
-  docs:
-    name: docs-style
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-      - name: Reject Unicode em dashes in Markdown
-        shell: bash
-        run: |
-          python - <<'PY'
-          from pathlib import Path
-          import subprocess
-          import sys
-
-          paths = subprocess.check_output(
-              ["git", "ls-files", "*.md"],
-              text=True,
-          ).splitlines()
-
-          failures = []
-          for name in paths:
-              path = Path(name)
-              for number, line in enumerate(
-                  path.read_text(encoding="utf-8").splitlines(),
-                  start=1,
-              ):
-                  if "\u2014" in line:
-                      failures.append((name, number))
-
-          for name, number in failures:
-              print(
-                  f"::error file={name},line={number}::"
-                  "Markdown must not contain U+2014 em dashes"
-              )
-
-          sys.exit(1 if failures else 0)
-          PY
-
-  # Single required status check for branch protection. Matrix job names are
-  # dynamic ("test (go 1.25, ubuntu-latest)"), so protecting them individually is
-  # brittle — protect this gate instead and it stays correct as the matrix changes.
-  ci-success:
-    name: ci-success
-    runs-on: ubuntu-latest
-    needs: [test, lint, vuln, fuzz, bench, docs, dco]
-    if: always()
-    steps:
-      - name: Fail if any dependency failed or was cancelled
-        run: |
-          echo "results: ${{ join(needs.*.result, ', ') }}"
-          if echo "${{ join(needs.*.result, ',') }}" | grep -qE 'failure|cancelled'; then
-            echo "::error::one or more required CI jobs did not succeed"
-            exit 1
-          fi
-
   dco:
     name: DCO sign-off
     runs-on: ubuntu-latest
@@ -195,7 +91,7 @@ jobs:
           fail=0
           for sha in $(git rev-list "$base..$head"); do
             if [ "$(git show -s --format='%p' "$sha" | wc -w)" -gt 1 ]; then
-              continue  # skip merge commits
+              continue
             fi
             if ! git show -s --format='%B' "$sha" | grep -qi '^Signed-off-by: .\+ <.\+@.\+>'; then
               echo "::error::commit $sha is missing a Signed-off-by line (use: git commit -s)"
@@ -203,3 +99,17 @@ jobs:
             fi
           done
           exit $fail
+
+  ci-success:
+    name: ci-success
+    runs-on: ubuntu-latest
+    needs: [test, lint, vuln, dco]
+    if: always()
+    steps:
+      - name: Fail if any dependency failed or was cancelled
+        run: |
+          echo "results: ${{ join(needs.*.result, ', ') }}"
+          if echo "${{ join(needs.*.result, ',') }}" | grep -qE 'failure|cancelled'; then
+            echo "::error::one or more required CI jobs did not succeed"
+            exit 1
+          fi

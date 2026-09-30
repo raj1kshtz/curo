@@ -32,7 +32,7 @@ ADRs use the following statuses:
 - **Accepted:** approved and governing implementation.
 - **Superseded:** replaced by a newer ADR that links back to the original.
 
-Merging an ADR marked `Accepted` records project consensus under the process
+Merging an ADR marked `Accepted` records project approval under the process
 defined in [GOVERNANCE.md](../../GOVERNANCE.md). A proposal may remain marked
 `Proposed` across multiple pull requests while evidence is gathered.
 

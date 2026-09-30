@@ -144,15 +144,15 @@ growth, or wedges request handling is release-blocking.
 
 ## Options Considered
 
-1. **Let panics propagate and rely on application recovery — rejected.**
+1. **Let panics propagate and rely on application recovery - rejected.**
    A library must not require every caller to defend against its defects.
-2. **Recover only in `RoundTrip` — rejected.**
+2. **Recover only in `RoundTrip` - rejected.**
    This does not protect background goroutines or user hook boundaries.
-3. **Unconditionally replay after recovery — rejected.**
+3. **Unconditionally replay after recovery - rejected.**
    This can duplicate non-idempotent operations.
-4. **Catch every panic, including the wrapped transport — rejected.**
+4. **Catch every panic, including the wrapped transport - rejected.**
    This masks host-owned failures and changes baseline semantics.
-5. **Use layered containment, stage-aware fallback, and self-disable —
+5. **Use layered containment, stage-aware fallback, and self-disable -
    selected.**
 
 ## Consequences

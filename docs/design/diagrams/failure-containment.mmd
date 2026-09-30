@@ -1,0 +1,73 @@
+---
+config:
+  theme: base
+  layout: dagre
+  flowchart:
+    curve: linear
+    nodeSpacing: 34
+    rankSpacing: 48
+    htmlLabels: true
+  themeVariables:
+    fontFamily: "Inter, ui-sans-serif, system-ui, sans-serif"
+    fontSize: "15px"
+    lineColor: "#64748B"
+    textColor: "#0F172A"
+---
+flowchart TB
+  subgraph topRow[" "]
+    direction LR
+
+    subgraph pre["Failure before an attempt"]
+      direction LR
+      p1["Curo-owned panic<br/>Preflight not complete"]:::safety
+      p2["Contain and report<br/>Count internal fault"]:::observability
+      p3["Untouched request<br/>Delegate exactly once"]:::external
+      p1 --> p2 --> p3
+    end
+
+    subgraph captured["Failure after a result is captured"]
+      direction LR
+      c1["Curo-owned panic<br/>Response or error available"]:::safety
+      c2["Contain and report<br/>Do not create an attempt"]:::observability
+      c3["Return captured result<br/>Preserve base outcome"]:::external
+      c1 --> c2 --> c3
+    end
+
+    pre ~~~ captured
+  end
+
+  subgraph bottomRow[" "]
+    direction LR
+
+    subgraph unknown["Attempt may have started, result unknown"]
+      direction LR
+      u1["Ambiguous attempt state<br/>Side effect may exist"]:::safety
+      u2["Contain and report<br/>Never replay blindly"]:::observability
+      u3["Return explicit failure<br/>No duplicate request"]:::external
+      u1 --> u2 --> u3
+    end
+
+    subgraph repeated["Repeated internal faults"]
+      direction LR
+      r1["Bounded failure signal<br/>Window threshold reached"]:::state
+      r2["Atomic self-disable<br/>No automatic oscillation"]:::safety
+      r3["Future requests<br/>Smallest pass-through path"]:::external
+      r1 --> r2 --> r3
+    end
+
+    unknown ~~~ repeated
+  end
+
+  topRow ~~~ bottomRow
+
+  classDef external fill:#F1F5F9,stroke:#475569,color:#0F172A,stroke-width:2px
+  classDef safety fill:#FFE4E6,stroke:#E11D48,color:#0F172A,stroke-width:2px
+  classDef state fill:#CCFBF1,stroke:#0F766E,color:#0F172A,stroke-width:2px
+  classDef observability fill:#DCFCE7,stroke:#15803D,color:#0F172A,stroke-width:2px
+
+  style pre fill:#FFF7ED,stroke:#FDBA74,color:#0F172A,stroke-width:2px
+  style captured fill:#F0FDF4,stroke:#86EFAC,color:#0F172A,stroke-width:2px
+  style unknown fill:#FFF1F2,stroke:#FDA4AF,color:#0F172A,stroke-width:2px
+  style repeated fill:#F8FAFC,stroke:#94A3B8,color:#0F172A,stroke-width:2px
+  style topRow fill:transparent,stroke:transparent
+  style bottomRow fill:transparent,stroke:transparent

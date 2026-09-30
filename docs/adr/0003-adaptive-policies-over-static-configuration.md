@@ -83,19 +83,19 @@ separate ADR will define operating modes and the default adoption mode.
 
 ## Options Considered
 
-1. **Static thresholds only — rejected as the primary model.**
+1. **Static thresholds only - rejected as the primary model.**
    - Strengths: simple, predictable, and familiar.
    - Weaknesses: requires tuning, drifts over time, and provides weak product
      differentiation.
-2. **Deterministic adaptive policy — selected.**
+2. **Deterministic adaptive policy - selected.**
    - Strengths: learns local behavior while remaining explainable, testable,
      and bounded.
    - Weaknesses: needs warm-up data and more state.
-3. **Machine-learning policy — rejected for the MVP.**
+3. **Machine-learning policy - rejected for the MVP.**
    - Strengths: may model complex patterns.
    - Weaknesses: opaque, difficult to reproduce and constrain, and
      operationally heavy.
-4. **Central fleet-wide policy — deferred.**
+4. **Central fleet-wide policy - deferred.**
    - Strengths: better cross-instance evidence.
    - Weaknesses: requires the control plane excluded by
      [ADR-0001](0001-embedded-library-over-sidecar-proxy.md).

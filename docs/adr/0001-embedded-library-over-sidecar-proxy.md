@@ -69,20 +69,20 @@ on demonstrated user demand.
 
 ## Options Considered
 
-1. **Embedded Go library — selected.**
+1. **Embedded Go library - selected.**
    - Strengths: rich context, no network hop, simple deployment, and the
      fastest path to validation.
    - Weaknesses: Go-only, process-local state, and library defects share the
      host's blast radius.
-2. **Sidecar proxy — rejected for `v0.x`.**
+2. **Sidecar proxy - rejected for `v0.x`.**
    - Strengths: language-neutral, independently upgradeable, and inline.
    - Weaknesses: Kubernetes-oriented operations, limited semantic context,
      another process, and another network hop.
-3. **Central agent with thin SDKs — rejected for `v0.x`.**
+3. **Central agent with thin SDKs - rejected for `v0.x`.**
    - Strengths: fleet-wide evidence and centralized policy.
    - Weaknesses: agent availability becomes a concern and the design still
      requires SDKs and a protocol.
-4. **Hybrid architecture from the start — deferred.**
+4. **Hybrid architecture from the start - deferred.**
    - Strengths: broadest long-term reach.
    - Weaknesses: largest initial scope and several unvalidated integration
      surfaces.

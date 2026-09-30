@@ -14,7 +14,7 @@ changes will always be listed here under **Changed** or **Removed**.
 
 - Project foundation: Apache-2.0 licence, contribution guide, code of conduct, security
   policy, governance model and CI pipeline.
-- Architecture Decision Records `0001`–`0007` capturing the founding design decisions.
-- High-level engine design document (`docs/design/engine.md`).
+- Architecture Decision Records `0001`–`0003` covering the embedded Go library,
+  host application inviolability, and adaptive policy model.
 
 [Unreleased]: https://github.com/raj1kshtz/curo/commits/main

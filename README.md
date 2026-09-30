@@ -125,12 +125,15 @@ How that is enforced:
   spawns (a parent `recover()` cannot catch those — the process would die).
 - **Self-disabling guard.** `curo` runs a circuit breaker over _its own_ internal error
   rate. Enough internal faults and it permanently disarms itself. The healer heals itself.
-- **Pristine fallback.** The original `*http.Request` is never mutated; `curo` works on a
-  clone. If anything goes wrong, your untouched request is replayed on the base transport.
+- **Pristine fallback.** The original `*http.Request` is never mutated; `curo`
+  works on a clone. Before an attempt starts, fallback may use the untouched
+  request exactly once. Once an attempt may have started, `curo` never blindly
+  replays it.
 - **No `panic`, `os.Exit` or `log.Fatal`** in library code — enforced by
   [`forbidigo`](.golangci.yml) in CI, not by discipline.
-- **Bounded everything.** Ring buffers and capped route cardinality. No unbounded map
-  keyed by URL, no goroutine leaks — verified with `goleak`.
+- **Bounded everything.** Ring buffers and capped route cardinality. No
+  unbounded map keyed by URL. Lifecycle and resource-bound tests verify that
+  shutdown does not leak goroutines.
 - **No `init()` side effects.** `curo` never touches `http.DefaultTransport` or any
   global you did not hand it.
 

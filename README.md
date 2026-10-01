@@ -12,9 +12,10 @@ application to tune static thresholds.
 
 > [!IMPORTANT]
 > Curo is pre-alpha and has no release. The current API provides transparent
-> transport behavior, bounded request observation, and aggregate runtime
-> statistics. Readiness and deterministic diagnosis run internally; public
-> diagnosis delivery, policy evaluation, and mitigation are not implemented.
+> transport behavior, bounded request observation, aggregate runtime
+> statistics, and a pull-based decision report. Curo evaluates readiness,
+> deterministic diagnoses, and control candidates, but mitigation is not
+> implemented: no candidate is applied, and `Enforce` behaves like `Observe`.
 
 ## Current status
 
@@ -22,9 +23,9 @@ application to tune static thresholds.
 | ---- | ------ |
 | Architecture decisions | Accepted and documented in [`docs/adr`](docs/adr/) |
 | Engine design | Documented in [`docs/design/engine.md`](docs/design/engine.md) |
-| Public Go API | Transport, lifecycle, operating modes, and aggregate statistics |
-| Runtime implementation | Guarded observation and diagnosis around direct delegation |
-| Adaptive behavior | Readiness and diagnosis implemented internally; policy and mitigation pending |
+| Public Go API | Transport, lifecycle, operating modes, aggregate statistics, and decision reports |
+| Runtime implementation | Guarded observation, diagnosis, and candidate evaluation around direct delegation |
+| Adaptive behavior | Readiness, diagnosis, and control candidates reported; mitigation pending |
 | Performance data | Allocation benchmarks added; regression gates pending |
 
 Public documentation is updated as features become real, rather than
@@ -54,8 +55,9 @@ concurrency, and `Close` is idempotent. The application closes the returned
 
 Every mode delegates the original request exactly once and returns the base
 response or error unchanged. `Observe` and `Enforce` record completed attempts
-and evaluate bounded internal diagnoses; `Off`, closed, and self-disabled
-transports use direct pass-through without collecting new evidence.
+and evaluate bounded diagnoses and control candidates; `Off`, closed, and
+self-disabled transports use direct pass-through without collecting new
+evidence.
 
 Observation keys include only a normalized HTTP or HTTPS scheme, bounded
 hostname, effective port, and closed method class. Paths, queries, URL user
@@ -83,9 +85,55 @@ fmt.Printf(
 )
 ```
 
-`Stats` intentionally does not expose target identities or diagnoses. Public
-diagnosis and audit delivery will be designed with the proposed-action
-milestone rather than added as an incomplete compatibility surface.
+`Stats` intentionally does not expose target identities or diagnoses.
+Per-target decisions and recent candidate changes are available through
+`Report`:
+
+```go
+report := transport.Report()
+for _, decision := range report.Targets {
+    fmt.Printf(
+        "%s %s readiness=%s diagnosis=%s candidates=%s reasons=%v\n",
+        decision.Target.Host,
+        decision.Target.Method,
+        decision.Readiness,
+        decision.Diagnosis,
+        decision.Candidates,
+        decision.Reasons,
+    )
+}
+for _, change := range report.Changes {
+    fmt.Printf(
+        "change=%d host=%s candidates=%s\n",
+        change.Sequence,
+        change.Decision.Target.Host,
+        change.Decision.Candidates,
+    )
+}
+```
+
+Completed `Observe` and `Enforce` requests, except caller-owned cancellations
+and timeouts, refresh a target's decision once the previous decision expires,
+at most ten seconds after its evaluation. `Report` copies published state
+without evaluating evidence, so an idle target keeps its last decision;
+compare `ExpiresAt` with the current time before relying on it. A tracked
+target without an evaluation appears with zero times and `Cold` readiness, and
+the overflow aggregate is never reported.
+
+Policy version 1 selects `CandidateRetry` for a `Transient` diagnosis and
+`CandidateBreakerOpen` for `DependencyDown` or `Saturation`. Candidates
+require `Ready` evidence; a matching diagnosis without it selects nothing and
+adds `ReasonReadinessRequired`. `Changes` keeps the latest 256 candidate
+changes with contiguous sequence numbers, so a gap between reads means older
+changes were overwritten. Candidates are reported for review and are never
+applied, including in `Enforce` mode.
+
+Report targets use the same normalized identity as observation. Hostnames can
+be influenced by untrusted input when an application calls user-supplied URLs,
+so do not use `Target.Host` as an unbounded metric label. `Report` is safe for
+concurrent use and remains readable after `Close`, in `Off` mode, and after
+self-disable. If Curo fails while building a report, it returns an empty
+report and counts the failure in `InternalFailures`.
 
 The transport now separates optional Curo-owned preflight and postflight work
 from the unguarded base transport call. A preflight failure falls back to the
@@ -127,9 +175,10 @@ constraint is therefore host application inviolability:
   semantics.
 
 The guarded request-stage boundary, bounded observer and historical baseline,
-deterministic diagnoser, aggregate internal-fault visibility, and self-disable
-signal are implemented. Policy, mitigation, and detailed audit delivery remain
-design requirements. The full contract is recorded in
+deterministic diagnoser, candidate policy, guarded decision report, aggregate
+internal-fault visibility, and self-disable signal are implemented. Mitigation
+and applied-action auditing remain design requirements. The full contract is
+recorded in
 [ADR-0002](docs/adr/0002-host-application-inviolability.md).
 
 ## Architecture
@@ -151,8 +200,9 @@ project governance material.
 
 The next milestones are:
 
-1. Add proposed-action evaluation and detailed audit delivery.
-2. Introduce mitigation controls with safety tests and benchmarks.
+1. Enforce retry candidates through aggregate retry budgets and replay-safety
+   checks.
+2. Add adaptive breaker and timeout controls with safety tests and benchmarks.
 3. Publish operational guidance after behavior is measured.
 
 ## Contributing

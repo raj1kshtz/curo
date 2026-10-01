@@ -24,7 +24,7 @@ func TestNormalizeTarget(t *testing.T) {
 				host:   "api.example.com",
 				port:   80,
 				scheme: schemeHTTP,
-				method: methodRead,
+				method: MethodRead,
 			},
 			valid: true,
 		},
@@ -39,7 +39,7 @@ func TestNormalizeTarget(t *testing.T) {
 				host:   "example.com",
 				port:   443,
 				scheme: schemeHTTPS,
-				method: methodWrite,
+				method: MethodWrite,
 			},
 			valid: true,
 		},
@@ -53,7 +53,7 @@ func TestNormalizeTarget(t *testing.T) {
 				host:   "proxy.example",
 				port:   443,
 				scheme: schemeHTTPS,
-				method: methodConnect,
+				method: MethodConnect,
 			},
 			valid: true,
 		},
@@ -66,7 +66,7 @@ func TestNormalizeTarget(t *testing.T) {
 				host:   "2001:db8::1",
 				port:   443,
 				scheme: schemeHTTPS,
-				method: methodRead,
+				method: MethodRead,
 			},
 			valid: true,
 		},
@@ -79,7 +79,7 @@ func TestNormalizeTarget(t *testing.T) {
 				host:   "192.0.2.1",
 				port:   80,
 				scheme: schemeHTTP,
-				method: methodRead,
+				method: MethodRead,
 			},
 			valid: true,
 		},
@@ -92,7 +92,7 @@ func TestNormalizeTarget(t *testing.T) {
 				host:   "fe80::1%ETH0",
 				port:   443,
 				scheme: schemeHTTPS,
-				method: methodRead,
+				method: MethodRead,
 			},
 			valid: true,
 		},
@@ -105,7 +105,7 @@ func TestNormalizeTarget(t *testing.T) {
 				host:   "fe80::1%eth0.",
 				port:   443,
 				scheme: schemeHTTPS,
-				method: methodRead,
+				method: MethodRead,
 			},
 			valid: true,
 		},
@@ -120,7 +120,7 @@ func TestNormalizeTarget(t *testing.T) {
 				host:   "example.com",
 				port:   8080,
 				scheme: schemeHTTP,
-				method: methodOther,
+				method: MethodOther,
 			},
 			valid: true,
 		},
@@ -202,19 +202,19 @@ func TestNormalizeTarget(t *testing.T) {
 func TestClassifyMethodUsesClosedClasses(t *testing.T) {
 	t.Parallel()
 
-	tests := map[string]methodClass{
-		"":                 methodRead,
-		http.MethodGet:     methodRead,
-		http.MethodHead:    methodRead,
-		http.MethodOptions: methodRead,
-		http.MethodTrace:   methodRead,
-		http.MethodPost:    methodWrite,
-		http.MethodPut:     methodWrite,
-		http.MethodPatch:   methodWrite,
-		http.MethodDelete:  methodWrite,
-		http.MethodConnect: methodConnect,
-		"get":              methodOther,
-		"CUSTOM":           methodOther,
+	tests := map[string]MethodClass{
+		"":                 MethodRead,
+		http.MethodGet:     MethodRead,
+		http.MethodHead:    MethodRead,
+		http.MethodOptions: MethodRead,
+		http.MethodTrace:   MethodRead,
+		http.MethodPost:    MethodWrite,
+		http.MethodPut:     MethodWrite,
+		http.MethodPatch:   MethodWrite,
+		http.MethodDelete:  MethodWrite,
+		http.MethodConnect: MethodConnect,
+		"get":              MethodOther,
+		"CUSTOM":           MethodOther,
 	}
 
 	for method, want := range tests {
@@ -261,14 +261,14 @@ func TestTargetKeyHashIncludesEveryDimension(t *testing.T) {
 		host:   "example.com",
 		port:   443,
 		scheme: schemeHTTPS,
-		method: methodRead,
+		method: MethodRead,
 	}
 	keys := []targetKey{
 		base,
-		{host: "other.example", port: 443, scheme: schemeHTTPS, method: methodRead},
-		{host: "example.com", port: 8443, scheme: schemeHTTPS, method: methodRead},
-		{host: "example.com", port: 443, scheme: schemeHTTP, method: methodRead},
-		{host: "example.com", port: 443, scheme: schemeHTTPS, method: methodWrite},
+		{host: "other.example", port: 443, scheme: schemeHTTPS, method: MethodRead},
+		{host: "example.com", port: 8443, scheme: schemeHTTPS, method: MethodRead},
+		{host: "example.com", port: 443, scheme: schemeHTTP, method: MethodRead},
+		{host: "example.com", port: 443, scheme: schemeHTTPS, method: MethodWrite},
 	}
 
 	hashes := make(map[uint64]struct{}, len(keys))
@@ -287,7 +287,7 @@ func TestTargetKeyLessIsDeterministic(t *testing.T) {
 		host:   "b.example",
 		port:   443,
 		scheme: schemeHTTPS,
-		method: methodWrite,
+		method: MethodWrite,
 	}
 	tests := []struct {
 		left  targetKey
@@ -318,7 +318,7 @@ func TestTargetKeyLessIsDeterministic(t *testing.T) {
 				scheme: schemeHTTPS,
 				host:   "b.example",
 				port:   443,
-				method: methodRead,
+				method: MethodRead,
 			},
 			right: base,
 			want:  true,
@@ -333,6 +333,35 @@ func TestTargetKeyLessIsDeterministic(t *testing.T) {
 	for index, test := range tests {
 		if got := test.left.less(test.right); got != test.want {
 			t.Errorf("case %d less() = %t, want %t", index, got, test.want)
+		}
+	}
+}
+
+func TestTargetKeyCompareFollowsLess(t *testing.T) {
+	t.Parallel()
+
+	lower := targetKey{
+		host:   "a.example",
+		port:   443,
+		scheme: schemeHTTPS,
+		method: MethodRead,
+	}
+	higher := lower
+	higher.method = MethodWrite
+
+	tests := []struct {
+		left  targetKey
+		right targetKey
+		want  int
+	}{
+		{left: lower, right: higher, want: -1},
+		{left: higher, right: lower, want: 1},
+		{left: lower, right: lower, want: 0},
+	}
+
+	for index, test := range tests {
+		if got := test.left.compare(test.right); got != test.want {
+			t.Errorf("case %d compare() = %d, want %d", index, got, test.want)
 		}
 	}
 }

@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/raj1kshtz/curo/internal/diagnose"
+	"github.com/raj1kshtz/curo/internal/policy"
 )
 
 const (
@@ -25,9 +26,16 @@ type baselineBucket struct {
 
 type diagnosisState struct {
 	result       diagnose.Result
+	plan         policy.Plan
 	lastRelevant int64
 	hasRelevant  bool
 	initialized  bool
+}
+
+type publication struct {
+	result    diagnose.Result
+	plan      policy.Plan
+	evaluated bool
 }
 
 type windowAccumulator struct {
@@ -44,7 +52,7 @@ func (target *target) recordDiagnosisLocked(
 	tick int64,
 	value observation,
 ) {
-	if !target.actionable {
+	if !target.actionable || target.retired {
 		return
 	}
 
@@ -106,6 +114,9 @@ func (target *target) diagnosisAt(tick int64) diagnose.Result {
 	target.mu.Lock()
 	defer target.mu.Unlock()
 
+	if target.retired {
+		return diagnose.Result{}
+	}
 	if tick < target.diagnosis.lastRelevant {
 		tick = target.diagnosis.lastRelevant
 	}
@@ -115,6 +126,23 @@ func (target *target) diagnosisAt(tick int64) diagnose.Result {
 	}
 
 	return target.diagnosis.result
+}
+
+// published returns the latest evaluation without evaluating. It reports
+// false for retired targets.
+func (target *target) published() (publication, bool) {
+	target.mu.Lock()
+	defer target.mu.Unlock()
+
+	if target.retired {
+		return publication{}, false
+	}
+
+	return publication{
+		result:    target.diagnosis.result,
+		plan:      target.diagnosis.plan,
+		evaluated: target.diagnosis.initialized,
+	}, true
 }
 
 func (target *target) snapshotAt(tick int64) diagnose.Snapshot {
@@ -142,8 +170,28 @@ func (target *target) evaluateDiagnosisLocked(tick int64) {
 		return
 	}
 
+	plan := policy.Evaluate(candidate)
+	if candidatesChanged(target.diagnosis, candidate, plan) {
+		target.changes.record(target.key, candidate, plan)
+	}
+
 	target.diagnosis.result = candidate
+	target.diagnosis.plan = plan
 	target.diagnosis.initialized = true
+}
+
+// candidatesChanged reports a different candidate set, or the same non-empty
+// set justified by a different diagnosis. Renewals are not changes.
+func candidatesChanged(
+	previous diagnosisState,
+	result diagnose.Result,
+	plan policy.Plan,
+) bool {
+	if plan.Candidates != previous.plan.Candidates {
+		return true
+	}
+
+	return plan.Candidates != 0 && result.Class != previous.result.Class
 }
 
 func (target *target) snapshotLocked(tick int64) diagnose.Snapshot {

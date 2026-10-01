@@ -17,8 +17,9 @@ import (
 // The current implementation delegates every request to the base transport
 // exactly once without mutation. Observe and Enforce collect bounded result
 // evidence behind narrow failure boundaries without wrapping the host-owned
-// transport call and evaluate deterministic internal diagnoses. Policy,
-// public diagnosis delivery, and mitigation are not implemented yet.
+// transport call, evaluate deterministic diagnoses and control candidates,
+// and publish them through Report. Mitigation is not implemented yet, so
+// candidates are never applied.
 //
 // A Transport must not be copied after first use.
 type Transport struct {
@@ -26,6 +27,7 @@ type Transport struct {
 	guard    *guard.Guard
 	observer *observe.Observer
 	stages   requestStages
+	reports  func() observe.Report
 
 	mode   atomic.Uint32
 	closed atomic.Bool
@@ -106,6 +108,7 @@ func New(base http.RoundTripper, options ...Option) (*Transport, error) {
 		guard:    guard.New(),
 		observer: observer,
 		stages:   observationStages{observer: observer},
+		reports:  observer.Report,
 	}
 	transport.mode.Store(uint32(cfg.mode))
 

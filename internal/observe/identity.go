@@ -17,20 +17,36 @@ const (
 	schemeHTTPS
 )
 
-type methodClass uint8
+// MethodClass is the bounded request-method dimension of a target identity.
+type MethodClass uint8
 
 const (
-	methodRead methodClass = iota
-	methodWrite
-	methodConnect
-	methodOther
+	// MethodRead covers GET, HEAD, OPTIONS, TRACE, and an empty method.
+	MethodRead MethodClass = iota
+
+	// MethodWrite covers POST, PUT, PATCH, and DELETE.
+	MethodWrite
+
+	// MethodConnect covers CONNECT.
+	MethodConnect
+
+	// MethodOther covers every other method, including non-canonical case.
+	MethodOther
 )
+
+// Identity is a detached copy of a normalized target key.
+type Identity struct {
+	Scheme string
+	Host   string
+	Port   uint16
+	Method MethodClass
+}
 
 type targetKey struct {
 	host   string
 	port   uint16
 	scheme scheme
-	method methodClass
+	method MethodClass
 }
 
 func normalizeTarget(request Request) (targetKey, bool) {
@@ -140,16 +156,16 @@ func normalizePort(value string, defaultPort uint16) (uint16, bool) {
 	return uint16(port), true
 }
 
-func classifyMethod(method string) methodClass {
+func classifyMethod(method string) MethodClass {
 	switch method {
 	case "", http.MethodGet, http.MethodHead, http.MethodOptions, http.MethodTrace:
-		return methodRead
+		return MethodRead
 	case http.MethodPost, http.MethodPut, http.MethodPatch, http.MethodDelete:
-		return methodWrite
+		return MethodWrite
 	case http.MethodConnect:
-		return methodConnect
+		return MethodConnect
 	default:
-		return methodOther
+		return MethodOther
 	}
 }
 
@@ -193,4 +209,29 @@ func (key targetKey) less(other targetKey) bool {
 	}
 
 	return key.method < other.method
+}
+
+func (key targetKey) compare(other targetKey) int {
+	switch {
+	case key.less(other):
+		return -1
+	case other.less(key):
+		return 1
+	default:
+		return 0
+	}
+}
+
+func (key targetKey) identity() Identity {
+	scheme := "http"
+	if key.scheme == schemeHTTPS {
+		scheme = "https"
+	}
+
+	return Identity{
+		Scheme: scheme,
+		Host:   key.host,
+		Port:   key.port,
+		Method: key.method,
+	}
 }

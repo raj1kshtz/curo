@@ -45,6 +45,7 @@ type Observer struct {
 	now      func() time.Time
 	origin   time.Time
 	registry *registry
+	changes  *journal
 
 	observed atomic.Uint64
 	overflow atomic.Uint64
@@ -52,14 +53,17 @@ type Observer struct {
 
 // New constructs an Observer with bounded production defaults.
 func New() *Observer {
-	return newObserver(time.Now)
+	return NewWithClock(time.Now)
 }
 
-func newObserver(now func() time.Time) *Observer {
+// NewWithClock constructs an Observer that reads time from now. A nil clock
+// uses time.Now. It exists so callers can drive deterministic tests.
+func NewWithClock(now func() time.Time) *Observer {
 	if now == nil {
 		now = time.Now
 	}
 
+	changes := &journal{}
 	return &Observer{
 		now:    now,
 		origin: now(),
@@ -67,7 +71,9 @@ func newObserver(now func() time.Time) *Observer {
 			defaultTargetCapacity,
 			defaultShardCount,
 			defaultIdleTTL,
+			changes,
 		),
+		changes: changes,
 	}
 }
 

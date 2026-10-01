@@ -54,11 +54,23 @@ const (
 const statusClassCount = 6
 const maxErrorNodes = 32
 
+type diagnosisSignal uint8
+
+const (
+	diagnosisNeutral diagnosisSignal = iota
+	diagnosisCallerOwned
+	diagnosisRateLimited
+	diagnosisClientFailure
+	diagnosisDependencyFailure
+	diagnosisSignalCount
+)
+
 type observation struct {
 	outcome       outcome
 	timeoutSource timeoutSource
 	statusClass   uint8
 	latencyBucket uint8
+	signal        diagnosisSignal
 	hasTimeout    bool
 	hasStatus     bool
 	hasLatency    bool
@@ -72,13 +84,24 @@ type evidenceBucket struct {
 	timeouts [timeoutSourceCount]uint64
 	statuses [statusClassCount]uint64
 	latency  [len(latencyUpperBounds) + 1]uint64
+	signals  [diagnosisSignalCount]uint64
+
+	firstTick         int64
+	lastTick          int64
+	firstRelevantTick int64
+	lastRelevantTick  int64
+	hasTick           bool
+	hasRelevantTick   bool
 }
 
 type target struct {
-	buckets [observationBucketCount]evidenceBucket
+	buckets  [observationBucketCount]evidenceBucket
+	baseline [baselineBucketCount]baselineBucket
 
-	mu         sync.Mutex
-	lastSeen   atomic.Int64
+	diagnosis diagnosisState
+	mu        sync.Mutex
+	lastSeen  atomic.Int64
+
 	actionable bool
 }
 
@@ -86,6 +109,9 @@ func newTarget(tick int64, actionable bool) *target {
 	state := &target{actionable: actionable}
 	for index := range state.buckets {
 		state.buckets[index].epoch = uninitializedEpoch
+	}
+	for index := range state.baseline {
+		state.baseline[index].epoch = uninitializedEpoch
 	}
 	state.lastSeen.Store(tick)
 
@@ -123,8 +149,20 @@ func (target *target) record(tick int64, value observation) bool {
 		*bucket = evidenceBucket{epoch: epoch}
 	}
 
+	recordEvidence(bucket, tick, value)
+	target.recordDiagnosisLocked(tick, value)
+
+	return true
+}
+
+func recordEvidence(
+	bucket *evidenceBucket,
+	tick int64,
+	value observation,
+) {
 	increment(&bucket.attempts)
 	increment(&bucket.outcomes[value.outcome])
+	increment(&bucket.signals[value.signal])
 	if value.hasTimeout {
 		increment(&bucket.timeouts[value.timeoutSource])
 	}
@@ -135,7 +173,20 @@ func (target *target) record(tick int64, value observation) bool {
 		increment(&bucket.latency[value.latencyBucket])
 	}
 
-	return true
+	recordTick(
+		tick,
+		&bucket.firstTick,
+		&bucket.lastTick,
+		&bucket.hasTick,
+	)
+	if value.signal != diagnosisCallerOwned {
+		recordTick(
+			tick,
+			&bucket.firstRelevantTick,
+			&bucket.lastRelevantTick,
+			&bucket.hasRelevantTick,
+		)
+	}
 }
 
 func classify(result Result, contextErr error, latency time.Duration) observation {
@@ -183,8 +234,37 @@ func classify(result Result, contextErr error, latency time.Duration) observatio
 		value.hasLatency = true
 		value.latencyBucket = latencyBucket(latency)
 	}
+	value.signal = classifyDiagnosisSignal(value, result, contextSignals)
 
 	return value
+}
+
+func classifyDiagnosisSignal(
+	value observation,
+	result Result,
+	contextSignals errorSignals,
+) diagnosisSignal {
+	switch {
+	case value.outcome == outcomeCanceled && contextSignals.canceled:
+		return diagnosisCallerOwned
+	case value.outcome == outcomeTimedOut &&
+		value.timeoutSource == timeoutCaller:
+		return diagnosisCallerOwned
+	case result.Err != nil:
+		return diagnosisDependencyFailure
+	case value.outcome == outcomeTransportFailure:
+		return diagnosisDependencyFailure
+	case result.HasResponse && result.StatusCode == 429:
+		return diagnosisRateLimited
+	case result.HasResponse &&
+		result.StatusCode >= 400 && result.StatusCode < 500:
+		return diagnosisClientFailure
+	case result.HasResponse &&
+		result.StatusCode >= 500 && result.StatusCode < 600:
+		return diagnosisDependencyFailure
+	default:
+		return diagnosisNeutral
+	}
 }
 
 type errorSignals struct {
@@ -301,5 +381,25 @@ func latencyBucket(latency time.Duration) uint8 {
 func increment(value *uint64) {
 	if *value < math.MaxUint64 {
 		*value++
+	}
+}
+
+func recordTick(
+	tick int64,
+	first *int64,
+	last *int64,
+	recorded *bool,
+) {
+	if !*recorded {
+		*first = tick
+		*last = tick
+		*recorded = true
+		return
+	}
+	if tick < *first {
+		*first = tick
+	}
+	if tick > *last {
+		*last = tick
 	}
 }

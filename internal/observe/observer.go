@@ -5,6 +5,8 @@ import (
 	"context"
 	"sync/atomic"
 	"time"
+
+	"github.com/raj1kshtz/curo/internal/diagnose"
 )
 
 // Request is the bounded request metadata accepted by Observer.
@@ -124,6 +126,18 @@ func (observer *Observer) Finish(token Token, result Result) {
 	if token.overflow {
 		observer.overflow.Add(1)
 	}
+}
+
+// Diagnosis returns the current bounded diagnosis for token's target.
+//
+// The zero value is returned for nil observers, empty tokens, and the
+// non-actionable overflow aggregate.
+func (observer *Observer) Diagnosis(token Token) diagnose.Result {
+	if observer == nil || token.target == nil || token.overflow {
+		return diagnose.Result{}
+	}
+
+	return token.target.diagnosisAt(observer.tick(observer.now()))
 }
 
 // Stats returns a concurrency-safe aggregate snapshot.

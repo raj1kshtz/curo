@@ -31,5 +31,8 @@ changes will always be listed here under **Changed** or **Removed**.
   and a non-actionable overflow aggregate.
 - Privacy-safe `Transport.Stats` snapshots for observed requests, tracked
   targets, overflow use, contained internal failures, and self-disable state.
+- Bounded readiness and deterministic internal diagnosis using disjoint recent
+  and historical evidence, closed classes, fixed reason codes, and expiring
+  immutable results.
 
 [Unreleased]: https://github.com/raj1kshtz/curo/commits/main

@@ -35,6 +35,7 @@ type Guard struct {
 
 	mu           sync.Mutex
 	failureCount int
+	total        atomic.Uint64
 	disabled     atomic.Bool
 }
 
@@ -56,6 +57,15 @@ func newGuard(now func() time.Time) *Guard {
 // A nil Guard is disabled so an incomplete owner fails safe.
 func (g *Guard) Disabled() bool {
 	return g == nil || g.disabled.Load()
+}
+
+// Failures returns the number of contained operation failures.
+func (g *Guard) Failures() uint64 {
+	if g == nil {
+		return 0
+	}
+
+	return g.total.Load()
 }
 
 // Run executes operation inside a narrow recovery boundary.
@@ -85,6 +95,8 @@ func (g *Guard) Run(operation func() error) (outcome Outcome) {
 }
 
 func (g *Guard) recordFailure() {
+	g.total.Add(1)
+
 	now := time.Now()
 	if g.now != nil {
 		now = g.now()

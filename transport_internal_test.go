@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -29,7 +30,7 @@ func TestPreflightFailureFallsBackToOriginalRequestOnce(t *testing.T) {
 			request, err := http.NewRequestWithContext(
 				context.Background(),
 				http.MethodPost,
-				"https://example.com/items",
+				"https://user:secret@EXAMPLE.com:8443/items?token=private",
 				nil,
 			)
 			if err != nil {
@@ -70,11 +71,14 @@ func TestPreflightFailureFallsBackToOriginalRequestOnce(t *testing.T) {
 					if snapshot.scheme != "https" {
 						t.Errorf("preflight scheme = %q, want https", snapshot.scheme)
 					}
-					if snapshot.host != "example.com" {
-						t.Errorf("preflight host = %q, want example.com", snapshot.host)
+					if snapshot.hostname != "EXAMPLE.com" {
+						t.Errorf(
+							"preflight hostname = %q, want EXAMPLE.com",
+							snapshot.hostname,
+						)
 					}
-					if snapshot.path != "/items" {
-						t.Errorf("preflight path = %q, want /items", snapshot.path)
+					if snapshot.port != "8443" {
+						t.Errorf("preflight port = %q, want 8443", snapshot.port)
 					}
 					if mode != Enforce {
 						t.Errorf("preflight mode = %v, want Enforce", mode)
@@ -103,6 +107,10 @@ func TestPreflightFailureFallsBackToOriginalRequestOnce(t *testing.T) {
 			}
 			if got := postflightCalls.Load(); got != 0 {
 				t.Errorf("postflight calls = %d, want 0", got)
+			}
+			stats := transport.Stats()
+			if stats.InternalFailures != 1 || stats.SelfDisabled {
+				t.Errorf("Stats() = %#v, want one non-disabling internal failure", stats)
 			}
 		})
 	}
@@ -168,6 +176,10 @@ func TestPostflightFailurePreservesCapturedResult(t *testing.T) {
 			}
 			if got := attempts.Load(); got != 1 {
 				t.Errorf("base attempts = %d, want 1", got)
+			}
+			stats := transport.Stats()
+			if stats.InternalFailures != 1 || stats.SelfDisabled {
+				t.Errorf("Stats() = %#v, want one non-disabling internal failure", stats)
 			}
 
 			body, readErr := io.ReadAll(response.Body)
@@ -235,6 +247,10 @@ func TestRepeatedInternalFailuresSelfDisableStages(t *testing.T) {
 	}
 	if got := attempts.Load(); got != 4 {
 		t.Errorf("base attempts = %d, want 4", got)
+	}
+	stats := transport.Stats()
+	if stats.InternalFailures != 3 || !stats.SelfDisabled {
+		t.Errorf("Stats() = %#v, want three failures and self-disable", stats)
 	}
 
 	if setModeErr := transport.SetMode(Observe); setModeErr != nil {
@@ -353,6 +369,10 @@ func TestBasePanicPropagatesOutsideActiveGuard(t *testing.T) {
 		if got := postflightCalls.Load(); got != 0 {
 			t.Errorf("postflight calls = %d, want 0", got)
 		}
+		stats := transport.Stats()
+		if stats.InternalFailures != 0 || stats.SelfDisabled {
+			t.Errorf("Stats() after base panic = %#v, want no internal failure", stats)
+		}
 	}()
 
 	response, roundTripErr := transport.RoundTrip(nil)
@@ -369,8 +389,77 @@ func TestRequestSnapshotHandlesNilURL(t *testing.T) {
 	if snapshot.method != http.MethodPatch {
 		t.Errorf("snapshot method = %q, want PATCH", snapshot.method)
 	}
-	if snapshot.scheme != "" || snapshot.host != "" || snapshot.path != "" {
+	if snapshot.requestContext == nil {
+		t.Fatal("snapshot context = nil, want background context")
+	}
+	if snapshot.scheme != "" || snapshot.hostname != "" || snapshot.port != "" {
 		t.Errorf("snapshot URL fields = %#v, want empty", snapshot)
+	}
+}
+
+func TestSnapshotAuthorityValidation(t *testing.T) {
+	t.Parallel()
+
+	tests := map[string]struct {
+		authority    string
+		wantHostname string
+		wantPort     string
+	}{
+		"hostname": {
+			authority:    "example.com",
+			wantHostname: "example.com",
+		},
+		"hostname and port": {
+			authority:    "example.com:8443",
+			wantHostname: "example.com",
+			wantPort:     "8443",
+		},
+		"ipv6": {
+			authority:    "[2001:db8::1]",
+			wantHostname: "2001:db8::1",
+		},
+		"ipv6 and port": {
+			authority:    "[2001:db8::1]:8443",
+			wantHostname: "2001:db8::1",
+			wantPort:     "8443",
+		},
+		"empty": {},
+		"manual user info": {
+			authority: "user@example.com",
+		},
+		"invalid port": {
+			authority: "example.com:bad",
+		},
+		"empty port": {
+			authority: "example.com:",
+		},
+		"unbracketed ipv6": {
+			authority: "2001:db8::1",
+		},
+		"unclosed ipv6": {
+			authority: "[2001:db8::1",
+		},
+		"invalid bracket suffix": {
+			authority: "[2001:db8::1]suffix",
+		},
+	}
+
+	for name, test := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			hostname, port := snapshotAuthority(&url.URL{Host: test.authority})
+			if hostname != test.wantHostname || port != test.wantPort {
+				t.Errorf(
+					"snapshotAuthority(%q) = (%q, %q), want (%q, %q)",
+					test.authority,
+					hostname,
+					port,
+					test.wantHostname,
+					test.wantPort,
+				)
+			}
+		})
 	}
 }
 
@@ -379,11 +468,17 @@ type testRequestStages struct {
 	after  func(attemptResult) error
 }
 
-func (s testRequestStages) preflight(snapshot requestSnapshot, mode Mode) error {
-	return s.before(snapshot, mode)
+func (s testRequestStages) preflight(
+	snapshot requestSnapshot,
+	mode Mode,
+) (requestState, error) {
+	return requestState{}, s.before(snapshot, mode)
 }
 
-func (s testRequestStages) postflight(result attemptResult) error {
+func (s testRequestStages) postflight(
+	_ requestState,
+	result attemptResult,
+) error {
 	return s.after(result)
 }
 

@@ -1,46 +1,88 @@
 package curo
 
 import (
+	"context"
 	"net/http"
+	"net/url"
+	"strings"
 	"sync/atomic"
 
 	"github.com/raj1kshtz/curo/internal/guard"
+	"github.com/raj1kshtz/curo/internal/observe"
 )
 
 // Transport is an explicit, concurrency-safe wrapper around a host-owned
 // http.RoundTripper.
 //
 // The current implementation delegates every request to the base transport
-// exactly once without mutation. It also provides narrow failure boundaries
-// for future Curo-owned request stages without wrapping the host-owned
-// transport call. Adaptive observation and mitigation will be added behind
-// this API in later releases.
+// exactly once without mutation. Observe and Enforce collect bounded result
+// evidence behind narrow failure boundaries without wrapping the host-owned
+// transport call. Adaptive diagnosis and mitigation are not implemented yet.
 //
 // A Transport must not be copied after first use.
 type Transport struct {
-	base   http.RoundTripper
-	guard  *guard.Guard
-	stages requestStages
+	base     http.RoundTripper
+	guard    *guard.Guard
+	observer *observe.Observer
+	stages   requestStages
 
 	mode   atomic.Uint32
 	closed atomic.Bool
 }
 
 type requestStages interface {
-	preflight(requestSnapshot, Mode) error
-	postflight(attemptResult) error
+	preflight(requestSnapshot, Mode) (requestState, error)
+	postflight(requestState, attemptResult) error
+}
+
+type requestState struct {
+	observation observe.Token
 }
 
 type requestSnapshot struct {
-	method string
-	scheme string
-	host   string
-	path   string
+	requestContext context.Context
+	method         string
+	scheme         string
+	hostname       string
+	port           string
 }
 
 type attemptResult struct {
-	err        error
-	statusCode int
+	err         error
+	statusCode  int
+	hasResponse bool
+}
+
+type observationStages struct {
+	observer *observe.Observer
+}
+
+func (stages observationStages) preflight(
+	snapshot requestSnapshot,
+	_ Mode,
+) (requestState, error) {
+	token := stages.observer.Begin(observe.Request{
+		Context:  snapshot.requestContext,
+		Method:   snapshot.method,
+		Scheme:   snapshot.scheme,
+		Hostname: snapshot.hostname,
+		Port:     snapshot.port,
+	})
+
+	return requestState{observation: token}, nil
+}
+
+func (stages observationStages) postflight(
+	state requestState,
+	result attemptResult,
+) error {
+	stages.observer.Finish(state.observation, observe.Result{
+		Err:         result.err,
+		StatusCode:  result.statusCode,
+		HasResponse: result.hasResponse,
+	})
+
+	return nil
 }
 
 // New constructs a Transport around base.
@@ -57,9 +99,12 @@ func New(base http.RoundTripper, options ...Option) (*Transport, error) {
 		return nil, err
 	}
 
+	observer := observe.New()
 	transport := &Transport{
-		base:  base,
-		guard: guard.New(),
+		base:     base,
+		guard:    guard.New(),
+		observer: observer,
+		stages:   observationStages{observer: observer},
 	}
 	transport.mode.Store(uint32(cfg.mode))
 
@@ -79,11 +124,14 @@ func (t *Transport) RoundTrip(req *http.Request) (*http.Response, error) {
 
 	stages := t.stages
 	runPostflight := false
+	var state requestState
 	if stages != nil && !t.closed.Load() {
 		mode := Mode(t.mode.Load())
 		if mode != Off && !t.guard.Disabled() {
 			runPostflight = t.guard.Run(func() error {
-				return stages.preflight(snapshotRequest(req), mode)
+				var err error
+				state, err = stages.preflight(snapshotRequest(req), mode)
+				return err
 			}) == guard.Completed
 		}
 	}
@@ -91,13 +139,16 @@ func (t *Transport) RoundTrip(req *http.Request) (*http.Response, error) {
 	response, err := t.base.RoundTrip(req)
 
 	if runPostflight {
-		result := attemptResult{err: err}
+		result := attemptResult{
+			err:         err,
+			hasResponse: response != nil,
+		}
 		if response != nil {
 			result.statusCode = response.StatusCode
 		}
 
 		_ = t.guard.Run(func() error {
-			return stages.postflight(result)
+			return stages.postflight(state, result)
 		})
 	}
 
@@ -106,17 +157,51 @@ func (t *Transport) RoundTrip(req *http.Request) (*http.Response, error) {
 
 func snapshotRequest(request *http.Request) requestSnapshot {
 	if request == nil {
-		return requestSnapshot{}
+		return requestSnapshot{requestContext: context.Background()}
 	}
 
-	snapshot := requestSnapshot{method: request.Method}
+	snapshot := requestSnapshot{
+		requestContext: request.Context(),
+		method:         request.Method,
+	}
 	if request.URL != nil {
 		snapshot.scheme = request.URL.Scheme
-		snapshot.host = request.URL.Host
-		snapshot.path = request.URL.Path
+		snapshot.hostname, snapshot.port = snapshotAuthority(request.URL)
 	}
 
 	return snapshot
+}
+
+func snapshotAuthority(address *url.URL) (string, string) {
+	rawAuthority := address.Host
+	if rawAuthority == "" || strings.Contains(rawAuthority, "@") {
+		return "", ""
+	}
+
+	port := address.Port()
+	if strings.HasPrefix(rawAuthority, "[") {
+		closingBracket := strings.LastIndex(rawAuthority, "]")
+		if closingBracket < 0 {
+			return "", ""
+		}
+
+		suffix := rawAuthority[closingBracket+1:]
+		if suffix != "" && (len(suffix) < 2 || suffix[0] != ':' || port == "") {
+			return "", ""
+		}
+	} else {
+		switch strings.Count(rawAuthority, ":") {
+		case 0:
+		case 1:
+			if port == "" {
+				return "", ""
+			}
+		default:
+			return "", ""
+		}
+	}
+
+	return address.Hostname(), port
 }
 
 // Mode returns the configured operating mode.
@@ -149,7 +234,8 @@ func (t *Transport) SetMode(mode Mode) error {
 // Close releases resources owned by the Transport.
 //
 // Close is idempotent. Requests made after Close continue to delegate directly
-// to the base transport. Close does not close the base transport.
+// to the base transport. Close does not close the base transport or discard
+// the bounded observation snapshot.
 func (t *Transport) Close() error {
 	if t == nil || t.base == nil {
 		return ErrNilBaseTransport

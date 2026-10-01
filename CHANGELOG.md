@@ -26,5 +26,10 @@ changes will always be listed here under **Changed** or **Removed**.
 - Internal request guard with stage-aware failure containment, a bounded
   rolling failure signal, atomic self-disable, and direct pass-through after
   repeated internal failures.
+- Bounded request observation with normalized target identities, fixed rolling
+  evidence buckets, deterministic capacity handling, lazy idle replacement,
+  and a non-actionable overflow aggregate.
+- Privacy-safe `Transport.Stats` snapshots for observed requests, tracked
+  targets, overflow use, contained internal failures, and self-disable state.
 
 [Unreleased]: https://github.com/raj1kshtz/curo/commits/main

@@ -197,6 +197,12 @@ func TestRoundTripPreservesBasePanic(t *testing.T) {
 		if recovered := recover(); recovered != panicValue {
 			t.Errorf("recovered value = %v, want %v", recovered, panicValue)
 		}
+		stats := transport.Stats()
+		if stats.ObservedRequests != 0 ||
+			stats.InternalFailures != 0 ||
+			stats.SelfDisabled {
+			t.Errorf("Stats() after base panic = %#v, want no completed observation", stats)
+		}
 	}()
 
 	response, roundTripErr := transport.RoundTrip(nil)

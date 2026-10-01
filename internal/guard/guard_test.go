@@ -20,6 +20,9 @@ func TestRunContainsPanicWithoutHoldingFailureLock(t *testing.T) {
 	if state.Disabled() {
 		t.Fatal("guard disabled after one failure, want enabled")
 	}
+	if got := state.Failures(); got != 1 {
+		t.Errorf("Failures() = %d, want 1", got)
+	}
 
 	done := make(chan Outcome, 1)
 	go func() {
@@ -92,6 +95,9 @@ func TestGuardDisablesAtFailureThreshold(t *testing.T) {
 	state.recordFailure()
 	if got := state.failureCount; got != failureThreshold {
 		t.Errorf("failure count after disable = %d, want %d", got, failureThreshold)
+	}
+	if got := state.Failures(); got != failureThreshold+1 {
+		t.Errorf("total failures after disable = %d, want %d", got, failureThreshold+1)
 	}
 	if !state.trippedAt.Equal(trippedAt) {
 		t.Errorf("trip time changed after disable: got %v, want %v", state.trippedAt, trippedAt)
@@ -189,6 +195,9 @@ func TestGuardIsSafeUnderConcurrentFailures(t *testing.T) {
 	if got := failed.Load() + skipped.Load(); got != workers {
 		t.Errorf("recorded outcomes = %d, want %d", got, workers)
 	}
+	if got, want := state.Failures(), uint64(failed.Load()); got != want {
+		t.Errorf("Failures() = %d, want %d", got, want)
+	}
 }
 
 func TestNilGuardFailsSafe(t *testing.T) {
@@ -208,6 +217,9 @@ func TestNilGuardFailsSafe(t *testing.T) {
 	}
 	if called.Load() {
 		t.Fatal("nil Guard ran operation")
+	}
+	if got := state.Failures(); got != 0 {
+		t.Errorf("nil Guard Failures() = %d, want 0", got)
 	}
 }
 

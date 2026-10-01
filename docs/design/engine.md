@@ -164,8 +164,10 @@ The current public surface is deliberately limited to `Transport`, `Mode`,
 `Option`, `Stats`, `Report` and its detached decision types, `New`,
 `WithMode`, mode access, aggregate statistics, the pull-based decision report,
 and lifecycle close. Report values use closed enums and copied fields, so
-internal registries, evaluation state, and policy types stay private. Replay
-opt-in, mitigation configuration, and applied-action auditing remain deferred.
+internal registries, evaluation state, and policy types stay private. Retries
+add no public type or option: their bounds are fixed internal constants, and
+their aggregate counts appear in `Stats`. Replay opt-in for unsafe methods,
+mitigation configuration, and applied-action auditing remain deferred.
 
 ### 7.2 Transport Adapter
 
@@ -184,6 +186,10 @@ The base call is not placed inside a Curo recovery boundary. If the wrapped
 transport panics, that panic preserves the application's baseline semantics
 and is not reported as a Curo-owned failure.
 
+When `Enforce` retries a request, guarded retry stages run after postflight
+and are followed by one more unguarded base call. That retry call has no
+postflight: its result is returned as captured.
+
 ### 7.3 Guard
 
 The guard owns:
@@ -201,8 +207,10 @@ The implementation provides this boundary through an internal guard and an
 active bounded observation, diagnosis, and candidate stage. Failures in that
 stage contribute to the self-disable signal. `Transport.Report` builds its
 snapshot inside the same guard, including after self-disable, and its failures
-contribute as well. The base transport remains outside the guard, and no
-mitigation stage is installed.
+contribute as well. The base transport remains outside the guard. The retry
+path adds guarded preparation and commit stages. It closes a discarded
+response body through a containment boundary that runs even after
+self-disable, because the body must still be released.
 
 ### 7.4 Mode Gate
 
@@ -218,6 +226,23 @@ self-disabled > Off > Observe > Enforce
 The ordering means a self-disabled instance cannot be forced back into its
 failing adaptive path merely by setting `Enforce`.
 
+The implemented gate loads one atomic authority word that holds the mode and a
+generation. Every effective mode change advances the generation; setting the
+current mode again changes nothing. The snapshot is an upper bound on the
+request's authority: a request that started in `Observe` never retries, even
+if `Enforce` is selected before its attempt completes.
+
+A retry can be pending only for a request that started in `Enforce`, so any
+later mode change first leaves `Enforce`. ADR-0005 requires that moving from
+`Enforce` to `Observe` stop new interventions immediately, `Off` grants less
+authority than `Observe`, and self-disable takes priority over every mode.
+Curo therefore treats a retry that has not started as a new intervention. A
+mode change, `Close`, or self-disable after the request started withdraws it,
+even if `Enforce` is restored before the retry would start, because a request
+never regains authority it lost. Authority is checked before and after the
+backoff. A revocation does not interrupt the wait, so one that happens during
+it takes effect when the wait ends, at most 100 milliseconds later.
+
 ### 7.5 Observer
 
 The observer converts a completed attempt into bounded evidence. It records
@@ -229,8 +254,12 @@ transport returns a response or error.
 The current implementation records completed initial attempts only. It uses a
 fixed target registry and fixed rolling buckets, classifies errors without
 retaining their text, maintains a disjoint bounded historical baseline, and
-exposes aggregate counts through `Transport.Stats`. Retry, probe, and in-flight
-evidence remain deferred.
+exposes aggregate counts through `Transport.Stats`. Each recorded initial
+attempt on a regular target also funds that target's retry budget and the
+instance retry budget. Retry attempts are counted only in aggregate `Stats`:
+they never enter evidence or fund a budget, so they cannot inflate demand or
+influence diagnosis. Per-target retry, probe, and in-flight evidence remain
+deferred.
 
 ### 7.6 Diagnoser
 
@@ -284,8 +313,10 @@ maps classes to a closed candidate set:
 
 Candidates require `Ready` evidence. A mapped class without it selects no
 candidate and records a `ReadinessRequired` reason. A plan expires with the
-diagnosis it was derived from. Plans are published through `Transport.Report`
-and are never applied, because no mitigation coordinator exists yet.
+diagnosis it was derived from. Plans are published through `Transport.Report`.
+In `Enforce`, a current plan with the retry candidate lets the retry control
+proceed with its own checks. The breaker-open candidate is reported but not
+applied.
 
 ### 7.8 Mitigation Coordinator
 
@@ -294,6 +325,12 @@ timeouts. It does not own long-term evidence.
 
 Before network I/O, it copies all required state into an immutable request
 snapshot and releases internal locks.
+
+The implemented coordinator covers retries only and lives in the root
+transport. Postflight checks request eligibility and reserves retry budget. A
+final guarded commit check after the backoff verifies authority, caller
+cancellation and deadline, and the published plan again. No lock is held
+during the backoff or either base transport call.
 
 ### 7.9 Base Transport
 
@@ -336,12 +373,14 @@ For each new request:
 8. Return the original captured result unchanged.
 
 Observe does not add a timeout, delay, retry, fail-fast response, or breaker
-probe.
+probe. It funds retry budgets from recorded initial attempts but never
+reserves from them, so credit earned while observing is available after a
+switch to `Enforce`.
 
 The current implementation performs steps 1 through 6 and step 8. Step 7 is
 pull-based: a candidate change is retained in a bounded journal that
-`Transport.Report` exposes, without an applied flag because no candidate is
-applied. The captured base response and error are unchanged.
+`Transport.Report` exposes, without an applied flag because Observe applies no
+candidate. The captured base response and error are unchanged.
 
 ### 8.3 Enforce
 
@@ -362,9 +401,26 @@ For each new request:
 The exact result-selection rule across multiple completed attempts is part of
 the public error and response contract.
 
-Until mitigation controls exist, `Enforce` follows the same bounded
-observation, diagnosis, and candidate path as `Observe` and does not change
-request behavior.
+The current implementation has no breaker or timeout gates, so steps 2 and 3
+do nothing yet. Steps 6 through 9 implement the retry path:
+
+1. Postflight records the initial attempt, refreshes an expired decision, and
+   checks retry eligibility. Its last step reserves one token from both retry
+   budgets.
+2. Curo waits a cancellable 25 to 100 millisecond backoff, clones the request,
+   and obtains a fresh body from `GetBody` when the request has one.
+3. A final guarded commit check confirms that the request's authority is still
+   current, the caller has not canceled the request, the caller's deadline
+   still leaves time for an attempt as long as the first, and the target's
+   published plan still permits a retry.
+4. Curo commits the reservation, closes the discarded first response body,
+   and calls the base transport once more with the clone.
+
+Step 10 is not implemented: decisions are reported without applied-action
+records, and `Stats` counts retries in aggregate. For step 11, a retry that
+starts supplies the result, whether a response, an error, or a panic from the
+base transport. A request without a started retry returns its first captured
+result untouched. A request makes at most two base transport calls.
 
 ## 9. Failure Containment
 
@@ -382,15 +438,23 @@ mode and self-disable check
     -> guarded preflight
     -> unguarded base RoundTrip
     -> capture response and error
-    -> guarded postflight
-    -> optional guarded retry decision
+    -> guarded postflight and retry reservation
+    -> guarded backoff, clone, and body replay
+    -> guarded commit check
+    -> contained close of the discarded response body
     -> unguarded base retry attempt
-    -> capture response and error
+    -> return the retry result
 ```
 
 This structure preserves host-owned transport panics and removes Curo-owned
 fallible work from the interval between starting an attempt and capturing its
 result.
+
+If a retry stage before the commit fails or declines, Curo returns the reserved
+token to both budgets and the first captured result to the caller. A failure
+in a guarded retry stage counts like any other stage failure. After the
+commit, closing the discarded body cannot stop the retry: a `Close` error is
+ignored, and a `Close` panic is counted as an internal failure.
 
 ### 9.2 Failure Before an Attempt
 
@@ -403,8 +467,8 @@ If guarded preflight fails:
 
 ### 9.3 Failure After Result Capture
 
-If observation, diagnosis, policy, or audit preparation fails after a response
-or error has been captured:
+If observation, diagnosis, policy, retry preparation, or audit preparation
+fails after a response or error has been captured:
 
 - Record the internal failure.
 - Evaluate self-disable.
@@ -488,6 +552,7 @@ The concurrency model is:
 - A short per-target lock for evidence and state transitions.
 - A short change-journal lock for recording or copying candidate changes.
 - Immutable copies for policy evaluation and network attempts.
+- Lock-free atomic words for retry budgets and reservations.
 - One lock order: registry shard, then target, then change journal. A shard
   lock covers a target lock only while retiring a replaced idle target.
 - No lock held during transport I/O, backoff, logging, or a host callback.
@@ -727,10 +792,17 @@ A stale policy version or expired plan is rejected before use.
 
 The implemented version 1 evaluator uses only the published diagnosis:
 class, readiness, and expiry. Its readiness gate is the first implemented
-safety precedence rule. Mode, request eligibility, breaker, timeout, and
-budget inputs are added with the controls that consume them. No consumer
-exists yet, so plans are reported rather than checked for version or expiry
-before use.
+safety precedence rule. The retry control checks mode, request eligibility,
+cancellation, deadline, and budget itself rather than passing them through
+the evaluator. Breaker and timeout inputs are added with the controls that
+consume them.
+
+The retry control is the first plan consumer. It uses a plan only when the
+target is live and the plan has the current policy version, contains the
+retry candidate, and has not expired. It checks again after the backoff and
+never evaluates a diagnosis itself. Plans refresh lazily during completion
+traffic, so a failure that arrives while an earlier `Healthy` plan is still
+current is not retried.
 
 ## 15. Mitigation Controls
 
@@ -751,7 +823,8 @@ A retry also requires:
 - A retryable diagnosis.
 - A method permitted by the replay policy.
 - An absent or reproducible body.
-- An active caller context.
+- An active caller context and an open `Cancel` channel, when the request
+  has one.
 - Sufficient remaining deadline.
 - A breaker state that permits the attempt.
 - Capacity under the hard per-request attempt ceiling.
@@ -760,11 +833,89 @@ The default replay policy is conservative. Safe read methods are eligible
 first. Unsafe methods require explicit application intent; the presence of an
 idempotency header alone is not assumed to prove safe replay.
 
-Backoff is cancellable and uses bounded jitter from an instance-owned,
-testable random source. It does not hold a lock.
+Backoff is cancellable, uses bounded jitter, and does not hold a lock.
 
-When a response is discarded for a retry, its body is closed. Any connection
-reuse drain is bounded by bytes and time.
+When a response is discarded for a retry, its body is closed.
+
+The implemented budgets are lock-free token buckets. Each regular target owns
+one, and each transport owns one instance budget:
+
+| Parameter | Value |
+| --------- | ----- |
+| Funding | 0.1 token to the target and instance budgets per recorded initial attempt on a regular target |
+| Target capacity | 10 tokens |
+| Instance capacity | 50 tokens |
+| Starting balance | Empty |
+| Cost | One token from each budget per retry |
+| Per-request ceiling | One retry, so at most two base transport calls |
+| Backoff | Uniform random delay from 25 to 100 milliseconds |
+
+Budgets are funded in `Observe` and `Enforce`. Overflow attempts and retry
+attempts never fund them, and tokens do not decay. Over any interval, retries
+against one target therefore number at most its 10-token capacity plus one
+tenth of the initial attempts recorded for it during that interval. The
+instance budget applies the same bound across all targets with its 50-token
+capacity. A replaced idle target starts with an empty budget.
+
+A reservation moves a token from available credit into a pending count.
+Available credit plus pending reservations never exceeds capacity, so a
+deposit cannot refill capacity that a pending reservation may still spend.
+The target token is reserved first and returned if the instance budget is
+empty. A reservation is held only from postflight to the commit check: the
+commit spends it just before the retry starts, and every other exit returns
+it.
+
+The implemented eligibility rules are:
+
+- **Replay safety:** the method is `GET`, `HEAD`, `OPTIONS`, `TRACE`, or
+  empty, and the body is absent, `http.NoBody`, or reproducible through
+  `GetBody`. Unsafe methods have no opt-in yet.
+- **Outcome:** a transport error attributed to the dependency, or a 502, 503,
+  or 504 response without a `Retry-After` field. A `Retry-After` field under
+  any key casing, even an empty or malformed one, means the dependency asked
+  callers to wait. Caller-owned cancellation and deadlines, 429, other 4xx,
+  and other 5xx responses never qualify.
+- **Plan:** the initial attempt was recorded on a regular target whose
+  published plan is current, contains the retry candidate, and has not
+  expired.
+- **Cancellation and deadline:** the caller's context is active, the
+  request's deprecated `Cancel` channel is nil or open, and any deadline
+  leaves more than the backoff plus the initial attempt's latency.
+- **Authority:** the request started in `Enforce`.
+
+No breaker exists yet, so no breaker state forbids a retry.
+
+An `http.Client` with a `Timeout` sets the deprecated `Cancel` channel on
+requests sent through a transport it does not recognize, which includes Curo,
+and also bounds the context deadline. Postflight, the backoff, and the commit
+check therefore treat a closed channel like a done context, and the retry
+clone keeps the channel so the base transport observes it too. Observing the
+channel needs no goroutine.
+
+Reservation is the last postflight check, so a denied reservation means every
+other condition held, and it increments `RetryBudgetDenials`. After the
+backoff, the commit check repeats the authority, cancellation, deadline, and
+plan checks. The remaining deadline must then exceed only the initial
+attempt's latency.
+
+The retry request is a clone of the original with the same context and
+`Cancel` channel. `GetBody` is called once, after the backoff and before the
+commit check. A `GetBody` error or nil body prevents the retry without
+counting as a Curo failure, because the body belongs to the application. A
+`GetBody` panic is contained and counted. A fresh body obtained for a retry
+that is then withdrawn is closed.
+
+When the retry starts, the discarded first response body is closed without
+being read. This can give up connection reuse in the base transport, but
+spends no time or bytes on a drain. The backoff uses a timer, ends early when
+the caller's context is done or the `Cancel` channel closes, and holds no
+lock. Each transport owns its jitter function, which draws from the Go
+runtime's random source; tests inject a fixed delay.
+
+`RetryAttempts` counts base transport calls that Curo starts for retries.
+Retries inside the base transport itself, such as `http.Transport` replaying a
+request after a reused connection fails, are not counted. A retry allocates
+its request clone and any replayed body.
 
 ### 15.2 Dependency Breaker
 
@@ -816,7 +967,8 @@ Every cell describes eligibility, not a guaranteed action.
 Policy version 1 implements only the retry candidate for `Transient` and the
 breaker-open candidate for `DependencyDown` and `Saturation`, each gated on
 `Ready` evidence. Close, probe, watch, limited-retry, and timeout candidates
-are not implemented.
+are not implemented. `Enforce` applies the retry candidate through the retry
+budget rules above. The breaker-open candidate is reported only.
 
 ## 16. Observability and Privacy
 
@@ -838,8 +990,9 @@ Each proposed or applied action includes bounded fields:
 `Transport.Report` implements a pull-based subset. Each decision carries its
 evaluation and expiry times, normalized target identity, readiness, diagnosis,
 ordered reason codes, recent and historical evidence summaries, policy
-version, and candidates. Mode, applied state, and budget decisions are added
-with mitigation. The diagnosis and plan share one expiry.
+version, and candidates. Mode, applied state, and per-request budget decisions
+are not recorded yet; retries are visible only through aggregate `Stats`
+counters. The diagnosis and plan share one expiry.
 
 ### 16.2 Excluded Data
 
@@ -892,12 +1045,18 @@ arbitrary callback, Curo cannot preempt an implementation that blocks forever.
 - Completed observed request count.
 - Current regular target count.
 - Overflow observation count.
+- Retry attempts that Curo started.
+- Retry successes, whose base call returned a 2xx or 3xx response without an
+  error.
+- Retry budget denials.
 - Contained internal failure count.
 - Sticky self-disable state.
 
 The snapshot contains no target identifiers or per-target evidence. Its fields
 are sampled independently under concurrency. Overflow never exceeds observed
-requests, and self-disabled state implies at least three contained failures.
+requests, retry successes never exceed retry attempts, retry attempts plus
+budget denials never exceed observed requests, and self-disabled state implies
+at least three contained failures.
 Per-target decisions are available through `Transport.Report`; callbacks and
 logging sinks remain deferred.
 
@@ -961,7 +1120,8 @@ continue using it after any construction error.
 ### 17.2 Mode Change
 
 Mode changes are atomic. They affect requests that have not yet taken their
-mode snapshot.
+mode snapshot. An effective change also withdraws every retry that has not
+started, as described for the mode gate.
 
 `Off` stops new observation but does not synchronously erase state. State ages
 normally and is invalidated by freshness checks.
@@ -989,9 +1149,11 @@ Close is idempotent:
 - Do not close the base transport.
 - Do not wait for arbitrary host callback work.
 
-In-flight requests use their captured snapshots and results. After close, new
-requests use direct pass-through, mode changes return `ErrClosed`, and the
-configured mode, aggregate statistics, and decision report remain readable.
+In-flight requests use their captured snapshots and results. A retry that has
+not started is withdrawn, and its request returns its first result. After
+close, new requests use direct pass-through, mode changes return `ErrClosed`,
+and the configured mode, aggregate statistics, and decision report remain
+readable.
 Close retains the bounded observer state so an in-flight postflight can finish
 safely.
 
@@ -1006,7 +1168,13 @@ safely.
 | Maintenance panic | Self-disable and stop worker |
 | Registry full | Use bounded overflow state |
 | Evidence stale | No autonomous intervention |
-| Budget exhausted | Do not retry |
+| Budget exhausted | Count a budget denial, return the first result |
+| Retry preparation or commit Curo panic | Count, return the first result |
+| `GetBody` error or nil body | Return the first result without counting |
+| `GetBody` panic | Count, return the first result |
+| Mode change, close, or self-disable before a retry starts | Withdraw the retry, return the first result |
+| Discarded body close error | Ignore, continue the retry |
+| Discarded body close panic | Count, continue the retry |
 | Caller context done | Stop waits and attempts |
 | Base transport panic | Preserve host transport semantics |
 | Runtime fatal or OOM | Outside recoverable guarantee |
@@ -1033,15 +1201,15 @@ Latency and allocation benchmarks compare Curo modes with the same base
 transport. The initial harness establishes a local baseline; numerical
 regression gates wait for a repeatable CI benchmark environment.
 
-The observer, diagnoser, and policy store 9,456 bytes of bounded target state
-on 64-bit platforms. The 128 regular targets plus overflow aggregate therefore
-use about 1.16 MiB, and the 256-entry change journal adds 38,928 bytes,
-excluding bounded map and key overhead. A report allocates detached copies of
-at most 128 decisions and 256 changes.
-Benchmarks cover Off and warm Observe paths with an already canonical target;
-both perform zero Curo heap allocations per request with the benchmark base
-transport. Inputs that require case or IP normalization may use bounded
-transient allocation.
+The observer, diagnoser, policy, and retry budget store 9,464 bytes of bounded
+target state on 64-bit platforms. The 128 regular targets plus overflow
+aggregate therefore use about 1.16 MiB, and the 256-entry change journal adds
+38,928 bytes, excluding bounded map and key overhead. A report allocates
+detached copies of at most 128 decisions and 256 changes.
+Benchmarks cover Off, warm Observe, and warm Enforce paths with an already
+canonical target and no retry; all three perform zero Curo heap allocations
+per request with the benchmark base transport. Inputs that require case or IP
+normalization may use bounded transient allocation.
 
 ## 20. Security Considerations
 
@@ -1185,14 +1353,27 @@ The initial contract is:
   self-disable. A Curo failure while building it returns an empty `Report`.
 - Decisions expose normalized target identity, readiness, diagnosis, ordered
   reason codes, recent and historical evidence summaries, policy version,
-  candidates, and evaluation and expiry times. Report enums are closed, their
-  `String` methods return stable names, and candidates are never applied in
-  any mode.
+  candidates, and evaluation and expiry times. Report enums are closed, and
+  their `String` methods return stable names. Only `Enforce` applies a
+  candidate, and only `CandidateRetry`.
 - Target state is bounded to 128 regular identities and one non-actionable
   overflow aggregate. Paths, queries, headers, bodies, URL user information,
   and raw error text are not retained.
-- The current `RoundTrip` path passes the original request to the base exactly
-  once and preserves its response, error, and panic behavior.
+- In `Off` and `Observe`, and in `Enforce` when no retry starts, `RoundTrip`
+  passes the original request to the base exactly once and preserves its
+  response, error, and panic behavior.
+- In `Enforce`, a replay-safe request whose initial attempt failed with a
+  transport error, or with a 502, 503, or 504 response without `Retry-After`,
+  may be retried once as a clone after a cancellable 25 to 100 millisecond
+  backoff. The target's current decision must select `CandidateRetry`, the
+  caller must not have canceled the request through its context or `Cancel`
+  channel, the caller's deadline must leave time, and both retry budgets must
+  hold a token.
+  A started retry's response, error, or panic is the result, and the
+  discarded first response body is closed.
+- A mode change, close, or self-disable withdraws a retry that has not
+  started, and the request returns its first result untouched.
+- `Stats` counts retry attempts, retry successes, and retry budget denials.
 
 The following surfaces remain deferred until their implementations exist:
 
@@ -1203,7 +1384,6 @@ The following surfaces remain deferred until their implementations exist:
 - Mode, applied-action, and budget fields in decision records.
 - Detailed internal-failure events and logging sinks.
 - Fail-fast and internal-failure error types.
-- Result selection after multiple completed attempts.
 - Self-disable reset.
 - Capacity, expiry, window, budget, and timeout options.
 

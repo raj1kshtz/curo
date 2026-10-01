@@ -478,8 +478,12 @@ func (s testRequestStages) preflight(
 func (s testRequestStages) postflight(
 	_ requestState,
 	result attemptResult,
-) error {
-	return s.after(result)
+) (retryGrant, error) {
+	return retryGrant{}, s.after(result)
+}
+
+func (testRequestStages) confirmRetry(requestState) bool {
+	return false
 }
 
 type internalRoundTripperFunc func(*http.Request) (*http.Response, error)

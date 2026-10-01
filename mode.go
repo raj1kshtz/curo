@@ -10,7 +10,9 @@ const (
 	// Observe permits evidence collection but does not permit request changes.
 	Observe
 
-	// Enforce permits eligible actions within configured safety bounds.
+	// Enforce permits eligible actions within fixed safety bounds. Currently
+	// the only action is at most one budgeted retry of a replay-safe request
+	// whose target has a current Retry candidate.
 	Enforce
 )
 

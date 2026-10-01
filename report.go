@@ -64,8 +64,9 @@ type Decision struct {
 	// Diagnosis is the deterministic diagnosis class.
 	Diagnosis Diagnosis
 
-	// Candidates holds controls the policy considers eligible. Curo does not
-	// apply candidates yet, including in Enforce mode.
+	// Candidates holds controls the policy considers eligible. Enforce mode
+	// applies CandidateRetry, subject to replay safety, the caller's deadline,
+	// and retry budgets. CandidateBreakerOpen is not applied yet.
 	Candidates Candidates
 }
 
@@ -340,11 +341,11 @@ type Candidates uint8
 
 const (
 	// CandidateRetry marks transient dependency failures as eligible for
-	// budgeted retries of replay-safe requests.
+	// budgeted retries of replay-safe requests. Enforce mode applies it.
 	CandidateRetry Candidates = 1 << iota
 
 	// CandidateBreakerOpen marks dependency failure or sustained rate limiting
-	// as eligible for opening a dependency breaker.
+	// as eligible for opening a dependency breaker. It is not applied yet.
 	CandidateBreakerOpen
 )
 

@@ -174,6 +174,10 @@ execution into:
 2. An unguarded call to the host-owned base transport.
 3. Guarded Curo postflight.
 
+Preflight receives an immutable value snapshot of the request metadata it
+needs. The caller's original request remains reserved for the base transport,
+so a failed preflight cannot mutate fallback input or consume its body.
+
 The base call is not placed inside a Curo recovery boundary. If the wrapped
 transport panics, that panic preserves the application's baseline semantics
 and is not reported as a Curo-owned failure.
@@ -190,6 +194,10 @@ The guard owns:
 
 Recovery is not normal control flow. A recovered panic always creates an
 internal failure record and may contribute to self-disable.
+
+The initial implementation provides this boundary through an internal guard
+and optional request stages. No observation or mitigation stage is installed
+yet, so current public requests retain the direct delegation path.
 
 ### 7.4 Mode Gate
 
@@ -290,9 +298,10 @@ For each new request:
 Observe does not add a timeout, delay, retry, fail-fast response, or breaker
 probe.
 
-The initial API implementation has no observation pipeline yet, so all three
-modes currently use the same direct delegation path. This is an implementation
-stage, not the final `Observe` or `Enforce` behavior.
+The current implementation has no observation pipeline yet, so all three modes
+use the same direct delegation path. The guard remains ready for internal
+stages without adding no-op work to the public request path. This is an
+implementation stage, not the final `Observe` or `Enforce` behavior.
 
 ### 8.3 Enforce
 
@@ -377,6 +386,23 @@ maintenance worker panics:
 - Atomically self-disable adaptive behavior.
 - Stop that worker.
 - Do not enter an automatic restart loop.
+
+### 9.6 Initial Self-Disable Threshold
+
+The initial guard uses a fixed three-entry rolling failure window. A guarded
+operation contributes one failure when it returns an internal error or raises
+a recovered panic. The third failure within one minute, including the exact
+window boundary, atomically and permanently selects self-disabled
+pass-through.
+
+The window is updated only on failure and has fixed memory use. Successful
+operations do not erase recent failures; elapsed time removes them when the
+next failure is recorded. Once self-disabled, the guard skips all later
+internal request stages and does not add more failures.
+
+The threshold is an internal safety setting rather than a public option.
+Current construction installs no adaptive request stage, so ordinary direct
+delegation cannot trip the guard.
 
 The registry remains memory-bounded after worker loss. Request access performs
 limited lazy expiry so worker loss cannot create unbounded growth.
@@ -739,6 +765,10 @@ Self-disable does not reset automatically. Explicit reset:
 - Does not silently grant `Enforce`.
 - Does not make stale adaptive evidence ready.
 
+The current public API does not expose reset. Reconstructing the `Transport`
+creates a fresh guard until reset semantics and reporting are implemented
+together.
+
 ### 17.4 Close
 
 Close is idempotent:
@@ -911,6 +941,14 @@ The initial contract is:
 - `Close` is idempotent and never closes the base transport.
 - After close, `RoundTrip` delegates directly and `SetMode` returns
   `ErrClosed`.
+- Optional Curo-owned request stages run only in guarded preflight and
+  postflight partitions. The wrapped transport call is never inside that
+  recovery boundary.
+- A preflight stage failure delegates the untouched original request exactly
+  once. A postflight stage failure returns the already captured response and
+  error without another attempt.
+- Three internal stage failures within one minute permanently bypass later
+  stages for that instance. No adaptive stages are installed yet.
 - The current `RoundTrip` path passes the original request to the base exactly
   once and preserves its response, error, and panic behavior.
 
@@ -920,6 +958,7 @@ The following surfaces remain deferred until their implementations exist:
 - Target classification.
 - Replay opt-in for unsafe methods.
 - Audit delivery through pull, callback, or both.
+- User-visible internal-failure reporting.
 - Fail-fast and internal-failure error types.
 - Result selection after multiple completed attempts.
 - Self-disable reset.

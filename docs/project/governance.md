@@ -8,7 +8,7 @@ the process used today; it will be revised if the maintainer group grows.
 1. Technical decisions and their rationale are discussed in public.
 2. Changes should be small enough to review and maintain.
 3. Architectural commitments are recorded in
-   [ADRs](docs/adr/README.md).
+   [ADRs](../adr/README.md).
 4. Safety and compatibility take priority over implementation convenience.
 
 ## Roles
@@ -18,7 +18,7 @@ submit changes.
 
 **Maintainers** review and merge changes, manage releases, and are accountable
 for the project's safety and compatibility commitments. Current maintainers are
-listed in [MAINTAINERS.md](MAINTAINERS.md).
+listed in [maintainers.md](maintainers.md).
 
 ## Decision making
 
@@ -39,7 +39,7 @@ exists at that time.
 
 Releases follow [Semantic Versioning](https://semver.org/). During `v0.x`, the
 public API may change between minor versions. Breaking changes must be
-documented in [CHANGELOG.md](CHANGELOG.md).
+documented in [CHANGELOG.md](../../CHANGELOG.md).
 
 A release requires a green `main` branch and release notes that describe
 user-visible changes.

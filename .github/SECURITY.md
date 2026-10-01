@@ -40,7 +40,7 @@ outbound request path. Security-sensitive failures therefore include:
 - **Retry amplification.** Retry behavior exceeds its aggregate safety bounds.
 
 The governing safety requirements are recorded in
-[ADR-0002](docs/adr/0002-host-application-inviolability.md).
+[ADR-0002](../docs/adr/0002-host-application-inviolability.md).
 
 ## Out of scope
 

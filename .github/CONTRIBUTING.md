@@ -16,13 +16,13 @@ is preserved for everyone. A substantial pull request without prior discussion
 may be redirected to an issue before review continues.
 
 If your change alters an architectural decision, it needs an
-[ADR](docs/adr/README.md) - not just code.
+[ADR](../docs/adr/README.md) - not just code.
 
 ## The one rule that is not negotiable
 
 > `curo` must never terminate, hang, or degrade the host process.
 
-This is [ADR-0002](docs/adr/0002-host-application-inviolability.md). A patch
+This is [ADR-0002](../docs/adr/0002-host-application-inviolability.md). A patch
 that is correct, fast and elegant will still be rejected if it can take down a
 host application.
 
@@ -60,7 +60,7 @@ sleeps for state transitions.
 
 - Keep architecture diagram sources and rendered SVGs synchronized. Rendering
   instructions live in
-  [`docs/design/diagrams/README.md`](docs/design/diagrams/README.md).
+  [`docs/design/diagrams/README.md`](../docs/design/diagrams/README.md).
 - Update related ADRs and the changelog in the same pull request.
 
 ## Commits

@@ -162,8 +162,9 @@ implementation types.
 
 The current public surface is deliberately limited to `Transport`, `Mode`,
 `Option`, `Stats`, `New`, `WithMode`, mode access, aggregate statistics, and
-lifecycle close. Diagnosis, detailed auditing, replay opt-in, and mitigation
-configuration remain internal until their behavior exists.
+lifecycle close. Diagnosis exists internally, but its public delivery contract
+remains deferred with detailed auditing, replay opt-in, and mitigation
+configuration.
 
 ### 7.2 Transport Adapter
 
@@ -196,9 +197,9 @@ Recovery is not normal control flow. A recovered panic always creates an
 internal failure record and may contribute to self-disable.
 
 The implementation provides this boundary through an internal guard and an
-active bounded observation stage. Observation failures contribute to the
-self-disable signal. The base transport remains outside the guard, and no
-mitigation stage is installed.
+active bounded observation and diagnosis stage. Observation or diagnosis
+failures contribute to the self-disable signal. The base transport remains
+outside the guard, and no mitigation stage is installed.
 
 ### 7.4 Mode Gate
 
@@ -224,9 +225,9 @@ transport returns a response or error.
 
 The current implementation records completed initial attempts only. It uses a
 fixed target registry and fixed rolling buckets, classifies errors without
-retaining their text, and exposes aggregate counts through `Transport.Stats`.
-Retry, probe, readiness, and diagnosis evidence are added with their owning
-features.
+retaining their text, maintains a disjoint bounded historical baseline, and
+exposes aggregate counts through `Transport.Stats`. Retry, probe, and in-flight
+evidence remain deferred.
 
 ### 7.6 Diagnoser
 
@@ -240,6 +241,13 @@ It produces:
 - Expiry.
 
 It performs no network I/O and does not mutate transport state.
+
+The implemented diagnoser is a pure internal package. The observer creates an
+immutable bounded snapshot while holding the short target lock, evaluates at
+most once per ten seconds during completion traffic, and stores the result as a
+cache for later internal reads. An expired read recomputes from retained
+evidence, so a future policy does not depend on continued completions. The
+overflow aggregate skips diagnosis entirely.
 
 ### 7.7 Policy Evaluator
 
@@ -298,16 +306,17 @@ For each new request:
 2. Call the base transport exactly once with the original request.
 3. Capture the response or error.
 4. Record bounded evidence.
-5. Produce a diagnosis and proposed action.
-6. Emit an audit record marked `applied=false`.
-7. Return the original captured result unchanged.
+5. Produce a diagnosis.
+6. Evaluate a proposed action.
+7. Emit an audit record marked `applied=false`.
+8. Return the original captured result unchanged.
 
 Observe does not add a timeout, delay, retry, fail-fast response, or breaker
 probe.
 
-The current implementation performs steps 1 through 4 and step 7. Readiness,
-diagnosis, proposed actions, and audit records remain pending. The captured
-base response and error are unchanged.
+The current implementation performs steps 1 through 5 and step 8. Proposed
+actions and audit records remain pending. The captured base response and error
+are unchanged.
 
 ### 8.3 Enforce
 
@@ -329,7 +338,8 @@ The exact result-selection rule across multiple completed attempts is part of
 the public error and response contract.
 
 Until mitigation controls exist, `Enforce` follows the same bounded
-observation path as `Observe` and does not change request behavior.
+observation and diagnosis path as `Observe` and does not change request
+behavior.
 
 ## 9. Failure Containment
 
@@ -542,6 +552,19 @@ HTTP response class is a parallel bounded dimension whenever a response
 exists. Therefore attempt count equals the sum of the five outcome counts.
 Retry, probe, and in-flight high-water evidence remain deferred.
 
+Each attempt also contributes exactly one diagnosis signal:
+
+- Neutral.
+- Caller-owned cancellation or timeout.
+- Explicit HTTP 429 rate limit.
+- Non-429 HTTP 4xx client failure.
+- Transport, transport-timeout, or HTTP 5xx dependency failure.
+
+An error takes precedence over a response status, so a response returned
+alongside a transport error cannot be mistaken for rate limiting. Caller-owned
+signals remain recorded but do not contribute to readiness or dependency
+failure rates.
+
 The latency histogram supports bounded approximate quantiles such as p95 and
 p99 without retaining individual samples. It has fixed bounds from one
 millisecond through 30 seconds plus an overflow bucket. Only attempts that
@@ -552,6 +575,16 @@ baseline.
 Completion time selects the rolling bucket. Each bucket stores its generation.
 A completion older than a newer generation already occupying the same slot is
 dropped rather than erasing current evidence.
+
+Snapshot reads include only generations inside the requested window. Old ring
+slots are ignored even if a target resumes after a long idle interval.
+
+Each actionable target also owns 30 fixed one-minute historical buckets.
+Historical snapshots omit every bucket that overlaps the two-minute recent
+window. Depending on the current minute boundary, this leaves 27 to 28 minutes
+of disjoint comparison history. One recent admission decision controls updates
+to both windows, completion timestamps move only forward, and an older
+completion cannot publish an older diagnosis.
 
 Initial demand, retry traffic, and probe traffic remain separate. Retry
 attempts never replenish a retry budget or inflate original demand.
@@ -566,9 +599,8 @@ per-node cancellation and timeout semantics, and stops after 32 nodes.
 Malformed or over-budget chains fall back to transport-failure evidence rather
 than delaying the captured result indefinitely.
 
-The two-minute window intentionally cannot make low-volume targets ready by
-itself. Readiness and longer-lived baseline design remain part of the diagnosis
-milestone.
+The two-minute window can make only sufficiently active targets ready.
+Lower-volume targets may become ready from the bounded historical window.
 
 ## 13. Readiness and Diagnosis
 
@@ -576,10 +608,17 @@ milestone.
 
 Readiness is separate from diagnosis:
 
-- `Cold`: no useful baseline.
-- `Warming`: evidence exists but cannot authorize intervention.
-- `Ready`: minimum sample, freshness, and stability checks pass.
-- `Stale`: prior evidence has expired and must warm again.
+- `Cold`: no dependency-relevant observation has been retained.
+- `Warming`: relevant recent evidence exists but neither readiness path is
+  satisfied.
+- `Ready`: either 20 relevant recent attempts span at least 30 seconds, or 20
+  relevant historical attempts span at least ten minutes.
+- `Stale`: prior relevant evidence exists but the two-minute recent window has
+  no relevant attempts.
+
+Relevant attempts exclude caller-owned cancellation and caller-owned timeout.
+This prevents caller behavior from warming dependency state. The
+non-actionable overflow aggregate never becomes ready.
 
 Insufficient readiness means no autonomous intervention.
 
@@ -596,22 +635,37 @@ The initial closed set is:
 | `ClientError` | Request-side failure that mitigation cannot repair |
 | `Degrading` | Sustained latency or error movement from baseline |
 
-The exact exported spelling belongs to public API design. Internal policy must
-not invent unbounded diagnosis labels.
+`None` is an internal sentinel when evidence supports no class. The exact
+exported spelling belongs to public API design. Internal policy must not invent
+unbounded diagnosis labels.
 
 ### 13.3 Deterministic Rule Order
 
-The diagnoser applies conservative ordered rules:
+The diagnoser applies conservative ordered rules to aggregate target evidence:
 
-1. Identify caller cancellation and request-side failure.
-2. Identify explicit rate limiting and overload evidence.
-3. Identify broad unavailability.
-4. Compare ready latency and error signals with their baseline.
-5. Classify isolated eligible failures as transient.
-6. Otherwise remain healthy or not ready.
+1. `ClientError` requires at least three client failures and at least half of
+   relevant recent attempts.
+2. `Saturation` requires at least three rate limits, ten relevant recent
+   attempts, and a rate-limit share of at least 20 percent.
+3. `DependencyDown` requires at least five dependency failures, ten relevant
+   recent attempts, and a dependency-failure share of at least 50 percent.
+4. `Degrading` requires a ready historical baseline, at least 20 relevant
+   recent samples and 50 historical comparison samples, then either a
+   20-percentage-point dependency-failure increase or a two-bucket p95 latency
+   increase.
+5. Remaining isolated dependency failures are `Transient`.
+6. Ready evidence with at least five relevant recent attempts is `Healthy`;
+   otherwise the class remains `None`.
 
-A diagnosis carries reason codes and expiry. It is not a machine-learning
-probability.
+Caller-owned signals are excluded from classification, and client or
+rate-limit classes require aggregate evidence rather than one preceding
+request. An isolated dependency failure may produce `Transient`. Response
+status is considered only when the transport returned no error.
+
+A diagnosis carries at most four fixed reason codes. Its immutable result is
+cached for at most ten seconds. A result derived from recent evidence also
+expires at the earliest retained generation boundary. It is not a
+machine-learning probability.
 
 ## 14. Policy Evaluation
 
@@ -889,9 +943,9 @@ Latency and allocation benchmarks compare Curo modes with the same base
 transport. The initial harness establishes a local baseline; numerical
 regression gates wait for a repeatable CI benchmark environment.
 
-The initial observer stores 2,808 bytes of rolling evidence per target on
-64-bit platforms. The 128 regular targets plus overflow aggregate therefore
-use about 354 KiB for evidence, excluding bounded map and key overhead.
+The observer and diagnoser store 9,328 bytes of bounded target state on 64-bit
+platforms. The 128 regular targets plus overflow aggregate therefore use about
+1.15 MiB, excluding bounded map and key overhead.
 Benchmarks cover Off and warm Observe paths with an already canonical target;
 both perform zero Curo heap allocations per request with the benchmark base
 transport. Inputs that require case or IP normalization may use bounded
@@ -946,8 +1000,9 @@ Inject a panic or error at every Curo-owned boundary and assert:
 
 ### 21.4 Race and Concurrency Tests
 
-Exercise mode changes, close, registry admission, observation updates, budget
-reservation, and breaker probes under `go test -race`.
+Exercise mode changes, close, registry admission, observation updates,
+readiness, diagnosis, budget reservation, and breaker probes under
+`go test -race`.
 
 ### 21.5 Fuzzing
 
@@ -1029,8 +1084,9 @@ The initial contract is:
 - Three internal stage failures within one minute permanently bypass later
   stages for that instance. Aggregate failure count and self-disable state are
   visible through `Stats`.
-- `Observe` and `Enforce` record bounded completed-attempt evidence. `Off`,
-  closed, and self-disabled paths do not collect new evidence.
+- `Observe` and `Enforce` record bounded completed-attempt evidence and
+  evaluate internal readiness and diagnosis. `Off`, closed, and self-disabled
+  paths do not collect new evidence.
 - Target state is bounded to 128 regular identities and one non-actionable
   overflow aggregate. Paths, queries, headers, bodies, URL user information,
   and raw error text are not retained.

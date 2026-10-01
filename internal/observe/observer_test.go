@@ -7,6 +7,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/raj1kshtz/curo/internal/diagnose"
 )
 
 func TestObserverRecordsBoundedResultEvidence(t *testing.T) {
@@ -87,6 +89,9 @@ func TestObserverUsesOverflowForInvalidIdentity(t *testing.T) {
 	}
 	if stats.TrackedTargets != 0 {
 		t.Errorf("TrackedTargets = %d, want 0", stats.TrackedTargets)
+	}
+	if got := observer.Diagnosis(token); got != (diagnose.Result{}) {
+		t.Errorf("overflow diagnosis = %#v, want zero", got)
 	}
 }
 
@@ -179,6 +184,9 @@ func TestObserverHandlesNilReceiversAndTokens(t *testing.T) {
 		t.Fatal("nil Observer returned a target")
 	}
 	observer.Finish(token, Result{})
+	if got := observer.Diagnosis(token); got != (diagnose.Result{}) {
+		t.Errorf("nil Observer Diagnosis() = %#v, want zero", got)
+	}
 	if got := observer.Stats(); got != (Stats{}) {
 		t.Errorf("nil Observer Stats() = %#v, want zero", got)
 	}
@@ -242,6 +250,79 @@ func TestObserverStatsMaintainAggregateRelationUnderConcurrency(t *testing.T) {
 	stats := observer.Stats()
 	if stats.ObservedRequests != workers || stats.OverflowRequests != workers {
 		t.Errorf("concurrent stats = %#v, want %d observed overflow requests", stats, workers)
+	}
+}
+
+func TestObserverProducesDeterministicTargetDiagnosis(t *testing.T) {
+	t.Parallel()
+
+	origin := time.Unix(5_000, 0)
+	clock := newObservationClock(origin)
+	observer := newObserver(clock.Now)
+	request := Request{
+		Context:  context.Background(),
+		Method:   "GET",
+		Scheme:   "https",
+		Hostname: "example.com",
+	}
+
+	var lastToken Token
+	for index := 0; index < 20; index++ {
+		token := observer.Begin(request)
+		lastToken = token
+
+		statusCode := httpStatusOK
+		if index >= 10 {
+			statusCode = httpStatusServiceUnavailable
+		}
+		observer.Finish(token, Result{
+			StatusCode:  statusCode,
+			HasResponse: true,
+		})
+		clock.Advance(2 * time.Second)
+	}
+
+	result := observer.Diagnosis(lastToken)
+	if result.Readiness != diagnose.ReadinessReady {
+		t.Errorf("readiness = %v, want Ready", result.Readiness)
+	}
+	if result.Class != diagnose.ClassDependencyDown {
+		t.Errorf("class = %v, want DependencyDown", result.Class)
+	}
+	if got := observer.Stats().ObservedRequests; got != 20 {
+		t.Errorf("ObservedRequests = %d, want 20", got)
+	}
+}
+
+func TestObserverExcludesCallerCancellationFromReadiness(t *testing.T) {
+	t.Parallel()
+
+	origin := time.Unix(6_000, 0)
+	clock := newObservationClock(origin)
+	observer := newObserver(clock.Now)
+	requestContext, cancel := context.WithCancel(context.Background())
+	cancel()
+	request := Request{
+		Context:  requestContext,
+		Method:   "GET",
+		Scheme:   "https",
+		Hostname: "example.com",
+	}
+
+	var lastToken Token
+	for range 20 {
+		token := observer.Begin(request)
+		lastToken = token
+		observer.Finish(token, Result{Err: context.Canceled})
+		clock.Advance(2 * time.Second)
+	}
+
+	result := observer.Diagnosis(lastToken)
+	if result.Readiness != diagnose.ReadinessCold {
+		t.Errorf("readiness = %v, want Cold", result.Readiness)
+	}
+	if result.Class != diagnose.ClassNone {
+		t.Errorf("class = %v, want None", result.Class)
 	}
 }
 

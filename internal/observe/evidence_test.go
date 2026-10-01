@@ -10,6 +10,8 @@ import (
 	"testing"
 	"time"
 	"unsafe"
+
+	"github.com/raj1kshtz/curo/internal/diagnose"
 )
 
 func TestClassifyUsesExclusiveOutcomes(t *testing.T) {
@@ -26,6 +28,7 @@ func TestClassifyUsesExclusiveOutcomes(t *testing.T) {
 		wantClass     uint8
 		wantLatency   bool
 		wantLatencyAt uint8
+		wantSignal    diagnosisSignal
 	}{
 		"success": {
 			result: Result{
@@ -37,6 +40,7 @@ func TestClassifyUsesExclusiveOutcomes(t *testing.T) {
 			wantClass:     1,
 			wantLatency:   true,
 			wantLatencyAt: 3,
+			wantSignal:    diagnosisNeutral,
 		},
 		"http failure": {
 			result: Result{
@@ -48,15 +52,23 @@ func TestClassifyUsesExclusiveOutcomes(t *testing.T) {
 			wantClass:     4,
 			wantLatency:   true,
 			wantLatencyAt: 3,
+			wantSignal:    diagnosisDependencyFailure,
 		},
 		"missing result": {
 			result:      Result{},
 			wantOutcome: outcomeTransportFailure,
+			wantSignal:  diagnosisDependencyFailure,
 		},
 		"canceled": {
 			result:      Result{Err: context.Canceled},
 			contextErr:  context.Canceled,
 			wantOutcome: outcomeCanceled,
+			wantSignal:  diagnosisCallerOwned,
+		},
+		"transport cancellation": {
+			result:      Result{Err: context.Canceled},
+			wantOutcome: outcomeCanceled,
+			wantSignal:  diagnosisDependencyFailure,
 		},
 		"caller deadline": {
 			result:      Result{Err: context.DeadlineExceeded},
@@ -64,12 +76,14 @@ func TestClassifyUsesExclusiveOutcomes(t *testing.T) {
 			wantOutcome: outcomeTimedOut,
 			wantTimeout: true,
 			wantSource:  timeoutCaller,
+			wantSignal:  diagnosisCallerOwned,
 		},
 		"transport deadline": {
 			result:      Result{Err: context.DeadlineExceeded},
 			wantOutcome: outcomeTimedOut,
 			wantTimeout: true,
 			wantSource:  timeoutTransport,
+			wantSignal:  diagnosisDependencyFailure,
 		},
 		"caller deadline with wrapped transport error": {
 			result:      Result{Err: genericError},
@@ -77,21 +91,49 @@ func TestClassifyUsesExclusiveOutcomes(t *testing.T) {
 			wantOutcome: outcomeTimedOut,
 			wantTimeout: true,
 			wantSource:  timeoutCaller,
+			wantSignal:  diagnosisCallerOwned,
 		},
 		"caller cancellation with transport error": {
 			result:      Result{Err: genericError},
 			contextErr:  context.Canceled,
 			wantOutcome: outcomeCanceled,
+			wantSignal:  diagnosisCallerOwned,
 		},
 		"transport timeout": {
 			result:      Result{Err: os.ErrDeadlineExceeded},
 			wantOutcome: outcomeTimedOut,
 			wantTimeout: true,
 			wantSource:  timeoutTransport,
+			wantSignal:  diagnosisDependencyFailure,
 		},
 		"transport error": {
 			result:      Result{Err: genericError},
 			wantOutcome: outcomeTransportFailure,
+			wantSignal:  diagnosisDependencyFailure,
+		},
+		"rate limited": {
+			result: Result{
+				StatusCode:  429,
+				HasResponse: true,
+			},
+			wantOutcome:   outcomeHTTPFailure,
+			wantStatus:    true,
+			wantClass:     3,
+			wantLatency:   true,
+			wantLatencyAt: 3,
+			wantSignal:    diagnosisRateLimited,
+		},
+		"client failure": {
+			result: Result{
+				StatusCode:  404,
+				HasResponse: true,
+			},
+			wantOutcome:   outcomeHTTPFailure,
+			wantStatus:    true,
+			wantClass:     3,
+			wantLatency:   true,
+			wantLatencyAt: 3,
+			wantSignal:    diagnosisClientFailure,
 		},
 		"status alongside error": {
 			result: Result{
@@ -102,6 +144,7 @@ func TestClassifyUsesExclusiveOutcomes(t *testing.T) {
 			wantOutcome: outcomeTransportFailure,
 			wantStatus:  true,
 			wantClass:   3,
+			wantSignal:  diagnosisDependencyFailure,
 		},
 	}
 
@@ -134,6 +177,9 @@ func TestClassifyUsesExclusiveOutcomes(t *testing.T) {
 					got.latencyBucket,
 					test.wantLatencyAt,
 				)
+			}
+			if got.signal != test.wantSignal {
+				t.Errorf("signal = %v, want %v", got.signal, test.wantSignal)
 			}
 		})
 	}
@@ -237,6 +283,7 @@ func TestTargetRecordsAndRotatesFixedBuckets(t *testing.T) {
 		timeoutSource: timeoutCaller,
 		statusClass:   4,
 		latencyBucket: 2,
+		signal:        diagnosisCallerOwned,
 		hasTimeout:    true,
 		hasStatus:     true,
 		hasLatency:    true,
@@ -260,6 +307,12 @@ func TestTargetRecordsAndRotatesFixedBuckets(t *testing.T) {
 	}
 	if bucket.latency[2] != 1 {
 		t.Errorf("latency bucket = %d, want 1", bucket.latency[2])
+	}
+	if bucket.signals[diagnosisCallerOwned] != 1 {
+		t.Errorf(
+			"caller-owned signals = %d, want 1",
+			bucket.signals[diagnosisCallerOwned],
+		)
 	}
 
 	nextGeneration := int64(observationBucketWidth) * observationBucketCount
@@ -310,10 +363,26 @@ func TestTargetHandlesNilNegativeAndSaturatedState(t *testing.T) {
 	}
 }
 
+func TestRecordTickExpandsBothBounds(t *testing.T) {
+	t.Parallel()
+
+	first := int64(10)
+	last := int64(10)
+	recorded := true
+	recordTick(9, &first, &last, &recorded)
+	recordTick(11, &first, &last, &recorded)
+	if first != 9 || last != 11 {
+		t.Errorf("tick bounds = [%d, %d], want [9, 11]", first, last)
+	}
+}
+
 func TestEvidenceStateCannotRetainSensitiveValues(t *testing.T) {
 	t.Parallel()
 
 	types := []reflect.Type{
+		reflect.TypeOf(baselineBucket{}),
+		reflect.TypeOf(diagnosisState{}),
+		reflect.TypeOf(diagnose.Result{}),
 		reflect.TypeOf(evidenceBucket{}),
 		reflect.TypeOf(target{}),
 	}
@@ -331,12 +400,12 @@ func TestEvidenceStateCannotRetainSensitiveValues(t *testing.T) {
 		}
 	}
 
-	const maximumTargetBytes = 4 * 1024
+	const maximumTargetBytes = 12 * 1024
 	if got := unsafe.Sizeof(target{}); got > maximumTargetBytes {
 		t.Errorf("target size = %d bytes, want at most %d", got, maximumTargetBytes)
 	}
 	if unsafe.Sizeof(uintptr(0)) == 8 {
-		const documentedTargetBytes = 2_808
+		const documentedTargetBytes = 9_328
 		if got := unsafe.Sizeof(target{}); got != documentedTargetBytes {
 			t.Errorf(
 				"64-bit target size = %d bytes, documented as %d",

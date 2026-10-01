@@ -103,6 +103,9 @@ Architectural decisions are recorded separately so that rejected alternatives
 and long-term constraints remain reviewable. See the
 [ADR index](docs/adr/README.md).
 
+The [documentation index](docs/README.md) links architecture, design, and
+project governance material.
+
 ## Implementation sequence
 
 The next milestones are:
@@ -115,8 +118,9 @@ The next milestones are:
 ## Contributing
 
 Design feedback is welcome, especially around failure semantics, replay safety,
-and bounded concurrency. Please read [CONTRIBUTING.md](CONTRIBUTING.md) before
-proposing an implementation or changing an accepted architectural decision.
+and bounded concurrency. Please read
+[CONTRIBUTING.md](.github/CONTRIBUTING.md) before proposing an implementation
+or changing an accepted architectural decision.
 
 ## License
 

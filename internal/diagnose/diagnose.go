@@ -132,8 +132,19 @@ type Snapshot struct {
 	EverRelevant    bool
 }
 
+// Evidence is the bounded explanation retained from one evaluated window.
+type Evidence struct {
+	RelevantAttempts   uint64
+	DependencyFailures uint64
+	RateLimited        uint64
+	ClientFailures     uint64
+	Span               int64
+}
+
 // Result is an immutable, expiring diagnosis snapshot.
 type Result struct {
+	Recent      Evidence
+	Historical  Evidence
 	EvaluatedAt int64
 	ExpiresAt   int64
 	Readiness   Readiness
@@ -149,6 +160,8 @@ func Evaluate(snapshot Snapshot) Result {
 	}
 
 	result := Result{
+		Recent:      summarize(snapshot.Recent),
+		Historical:  summarize(snapshot.Historical),
 		EvaluatedAt: snapshot.Now,
 		ExpiresAt:   saturatingAdd(snapshot.Now, int64(resultTTL)),
 	}
@@ -232,6 +245,24 @@ func windowReady(window Window, samples uint64, span time.Duration) bool {
 	return window.RelevantAttempts >= samples &&
 		window.LastRelevantTick >= window.FirstRelevantTick &&
 		window.LastRelevantTick-window.FirstRelevantTick >= int64(span)
+}
+
+func summarize(window Window) Evidence {
+	evidence := Evidence{
+		RelevantAttempts:   window.RelevantAttempts,
+		DependencyFailures: window.DependencyFailures,
+		RateLimited:        window.RateLimited,
+		ClientFailures:     window.ClientFailures,
+	}
+	if window.RelevantAttempts > 0 &&
+		window.LastRelevantTick > window.FirstRelevantTick {
+		evidence.Span = window.LastRelevantTick - window.FirstRelevantTick
+		if evidence.Span < 0 {
+			evidence.Span = math.MaxInt64
+		}
+	}
+
+	return evidence
 }
 
 func failureRateIncreased(recent, historical Window) bool {

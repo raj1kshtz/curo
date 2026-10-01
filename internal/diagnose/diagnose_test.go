@@ -384,6 +384,146 @@ func TestEvaluateHandlesZeroAndSaturatedCounters(t *testing.T) {
 	}
 }
 
+func TestEvaluateSummarizesWindowEvidence(t *testing.T) {
+	t.Parallel()
+
+	recent := Window{
+		Attempts:           12,
+		RelevantAttempts:   10,
+		DependencyFailures: 3,
+		RateLimited:        2,
+		ClientFailures:     1,
+		FirstRelevantTick:  int64(time.Second),
+		LastRelevantTick:   int64(4 * time.Second),
+		LastTick:           int64(5 * time.Second),
+	}
+	historical := Window{
+		Attempts:           40,
+		RelevantAttempts:   30,
+		DependencyFailures: 4,
+		RateLimited:        5,
+		ClientFailures:     6,
+		FirstRelevantTick:  int64(time.Minute),
+		LastRelevantTick:   int64(3 * time.Minute),
+	}
+	wantRecent := Evidence{
+		RelevantAttempts:   10,
+		DependencyFailures: 3,
+		RateLimited:        2,
+		ClientFailures:     1,
+		Span:               int64(3 * time.Second),
+	}
+	wantHistorical := Evidence{
+		RelevantAttempts:   30,
+		DependencyFailures: 4,
+		RateLimited:        5,
+		ClientFailures:     6,
+		Span:               int64(2 * time.Minute),
+	}
+
+	tests := map[string]struct {
+		snapshot       Snapshot
+		wantRecent     Evidence
+		wantHistorical Evidence
+		wantReadiness  Readiness
+	}{
+		"cold caller-only traffic": {
+			snapshot: Snapshot{
+				Recent: Window{Attempts: 4, LastTick: int64(time.Second)},
+				Now:    int64(time.Second),
+			},
+			wantReadiness: ReadinessCold,
+		},
+		"stale with historical evidence": {
+			snapshot: Snapshot{
+				Historical:   historical,
+				Now:          int64(20 * time.Minute),
+				EverRelevant: true,
+			},
+			wantHistorical: wantHistorical,
+			wantReadiness:  ReadinessStale,
+		},
+		"evaluated": {
+			snapshot: Snapshot{
+				Recent:          recent,
+				Historical:      historical,
+				Now:             int64(5 * time.Second),
+				RecentExpiresAt: int64(2 * time.Minute),
+				EverRelevant:    true,
+			},
+			wantRecent:     wantRecent,
+			wantHistorical: wantHistorical,
+			wantReadiness:  ReadinessWarming,
+		},
+	}
+
+	for name, test := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			got := Evaluate(test.snapshot)
+			if got.Readiness != test.wantReadiness {
+				t.Errorf("readiness = %v, want %v", got.Readiness, test.wantReadiness)
+			}
+			if got.Recent != test.wantRecent {
+				t.Errorf("recent evidence = %+v, want %+v", got.Recent, test.wantRecent)
+			}
+			if got.Historical != test.wantHistorical {
+				t.Errorf(
+					"historical evidence = %+v, want %+v",
+					got.Historical,
+					test.wantHistorical,
+				)
+			}
+		})
+	}
+}
+
+func TestSummarizeBoundsEvidenceSpan(t *testing.T) {
+	t.Parallel()
+
+	tests := map[string]struct {
+		window Window
+		want   int64
+	}{
+		"no relevant attempts": {
+			window: Window{FirstRelevantTick: 1, LastRelevantTick: 2},
+		},
+		"single instant": {
+			window: Window{
+				RelevantAttempts:  1,
+				FirstRelevantTick: 5,
+				LastRelevantTick:  5,
+			},
+		},
+		"backward": {
+			window: Window{
+				RelevantAttempts:  2,
+				FirstRelevantTick: 5,
+				LastRelevantTick:  1,
+			},
+		},
+		"overflow": {
+			window: Window{
+				RelevantAttempts:  2,
+				FirstRelevantTick: math.MinInt64,
+				LastRelevantTick:  math.MaxInt64,
+			},
+			want: math.MaxInt64,
+		},
+	}
+
+	for name, test := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			if got := summarize(test.window).Span; got != test.want {
+				t.Errorf("span = %d, want %d", got, test.want)
+			}
+		})
+	}
+}
+
 func TestResultReasonsRemainBounded(t *testing.T) {
 	t.Parallel()
 
@@ -472,6 +612,13 @@ func FuzzEvaluateRemainsBounded(f *testing.F) {
 				"expiry %d precedes evaluation %d",
 				result.ExpiresAt,
 				result.EvaluatedAt,
+			)
+		}
+		if result.Recent.Span < 0 || result.Historical.Span < 0 {
+			t.Fatalf(
+				"evidence spans = %d and %d, want non-negative",
+				result.Recent.Span,
+				result.Historical.Span,
 			)
 		}
 	})

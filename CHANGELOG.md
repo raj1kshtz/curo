@@ -34,5 +34,15 @@ changes will always be listed here under **Changed** or **Removed**.
 - Bounded readiness and deterministic internal diagnosis using disjoint recent
   and historical evidence, closed classes, fixed reason codes, and expiring
   immutable results.
+- Policy version 1 control candidates: a `Ready` `Transient` diagnosis selects
+  a retry candidate, and a `Ready` `DependencyDown` or `Saturation` diagnosis
+  selects a breaker-open candidate. Candidates are reported but never applied.
+- `Transport.Report` with detached per-target decisions covering normalized
+  identity, readiness, diagnosis, ordered reason codes, recent and historical
+  evidence summaries, policy version, candidates, and evaluation and expiry
+  times, plus the latest 256 candidate changes with contiguous sequence
+  numbers.
+- Guarded report construction: a Curo failure returns an empty report and
+  counts toward `InternalFailures` and self-disable.
 
 [Unreleased]: https://github.com/raj1kshtz/curo/commits/main

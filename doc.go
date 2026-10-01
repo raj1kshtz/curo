@@ -3,7 +3,7 @@
 //
 // The current implementation provides transparent delegation, operating-mode
 // control, lifecycle semantics, bounded request observation, aggregate runtime
-// statistics, deterministic internal diagnosis, and guarded request stages.
-// Policy evaluation, public diagnosis delivery, and mitigation are not
-// implemented yet.
+// statistics, deterministic diagnosis, control-candidate evaluation, a
+// pull-based decision report, and guarded request stages. Mitigation is not
+// implemented yet, so candidates are never applied.
 package curo

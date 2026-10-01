@@ -6,8 +6,8 @@
 - **Audience:** Maintainers, contributors, reviewers, and adopters
 
 > [!NOTE]
-> This document describes intended architecture. The public API and runtime
-> packages have not been implemented yet.
+> This document describes the intended `v0.1.0` architecture. Sections state
+> which parts are implemented today; everything else remains a design target.
 
 ## 1. Executive Summary
 
@@ -77,8 +77,8 @@ The first engine does not provide:
 - Machine-learning policy.
 - Persistent adaptive state across process restarts.
 - Arbitrary workflow execution.
-- Public diagnosis, audit, replay, and mitigation-control types beyond the
-  initial transport API.
+- Public replay and mitigation-control types beyond the transport,
+  statistics, and decision report API.
 
 ## 5. Architectural Invariants
 
@@ -161,10 +161,11 @@ It must not expose internal state machines, mutable registries, or policy
 implementation types.
 
 The current public surface is deliberately limited to `Transport`, `Mode`,
-`Option`, `Stats`, `New`, `WithMode`, mode access, aggregate statistics, and
-lifecycle close. Diagnosis exists internally, but its public delivery contract
-remains deferred with detailed auditing, replay opt-in, and mitigation
-configuration.
+`Option`, `Stats`, `Report` and its detached decision types, `New`,
+`WithMode`, mode access, aggregate statistics, the pull-based decision report,
+and lifecycle close. Report values use closed enums and copied fields, so
+internal registries, evaluation state, and policy types stay private. Replay
+opt-in, mitigation configuration, and applied-action auditing remain deferred.
 
 ### 7.2 Transport Adapter
 
@@ -197,9 +198,11 @@ Recovery is not normal control flow. A recovered panic always creates an
 internal failure record and may contribute to self-disable.
 
 The implementation provides this boundary through an internal guard and an
-active bounded observation and diagnosis stage. Observation or diagnosis
-failures contribute to the self-disable signal. The base transport remains
-outside the guard, and no mitigation stage is installed.
+active bounded observation, diagnosis, and candidate stage. Failures in that
+stage contribute to the self-disable signal. `Transport.Report` builds its
+snapshot inside the same guard, including after self-disable, and its failures
+contribute as well. The base transport remains outside the guard, and no
+mitigation stage is installed.
 
 ### 7.4 Mode Gate
 
@@ -245,9 +248,14 @@ It performs no network I/O and does not mutate transport state.
 The implemented diagnoser is a pure internal package. The observer creates an
 immutable bounded snapshot while holding the short target lock, evaluates at
 most once per ten seconds during completion traffic, and stores the result as a
-cache for later internal reads. An expired read recomputes from retained
-evidence, so a future policy does not depend on continued completions. The
-overflow aggregate skips diagnosis entirely.
+cache for later internal reads. An expired internal read recomputes from
+retained evidence, so a future policy does not depend on continued
+completions. `Transport.Report` copies the published result without
+recomputing it. The overflow aggregate skips diagnosis entirely.
+
+Each result also summarizes the recent and historical windows it used:
+dependency-relevant attempts, dependency failures, rate limits, client
+failures, and the span between the first and last relevant attempts.
 
 ### 7.7 Policy Evaluator
 
@@ -262,6 +270,22 @@ action plan. The plan may contain:
 
 A plan is not authority. The mitigation coordinator still verifies mode,
 freshness, request eligibility, context, and capacity.
+
+The implemented evaluator is a pure internal package with policy version 1.
+It runs whenever a diagnosis is published, under the same target lock, and
+maps classes to a closed candidate set:
+
+| Diagnosis | Candidate |
+| --------- | --------- |
+| `Transient` | Retry |
+| `DependencyDown` | Breaker open |
+| `Saturation` | Breaker open |
+| Any other class | None |
+
+Candidates require `Ready` evidence. A mapped class without it selects no
+candidate and records a `ReadinessRequired` reason. A plan expires with the
+diagnosis it was derived from. Plans are published through `Transport.Report`
+and are never applied, because no mitigation coordinator exists yet.
 
 ### 7.8 Mitigation Coordinator
 
@@ -314,9 +338,10 @@ For each new request:
 Observe does not add a timeout, delay, retry, fail-fast response, or breaker
 probe.
 
-The current implementation performs steps 1 through 5 and step 8. Proposed
-actions and audit records remain pending. The captured base response and error
-are unchanged.
+The current implementation performs steps 1 through 6 and step 8. Step 7 is
+pull-based: a candidate change is retained in a bounded journal that
+`Transport.Report` exposes, without an applied flag because no candidate is
+applied. The captured base response and error are unchanged.
 
 ### 8.3 Enforce
 
@@ -338,8 +363,8 @@ The exact result-selection rule across multiple completed attempts is part of
 the public error and response contract.
 
 Until mitigation controls exist, `Enforce` follows the same bounded
-observation and diagnosis path as `Observe` and does not change request
-behavior.
+observation, diagnosis, and candidate path as `Observe` and does not change
+request behavior.
 
 ## 9. Failure Containment
 
@@ -425,7 +450,9 @@ increase the aggregate failure count.
 
 The threshold is an internal safety setting rather than a public option.
 The active observation stage runs only in `Observe` and `Enforce`. Its
-contained failures are visible through aggregate `Stats`.
+contained failures are visible through aggregate `Stats`. Report construction
+is not a request stage: it still runs after self-disable, and its contained
+failures count toward the same window and aggregate count.
 
 ## 10. State and Concurrency Ownership
 
@@ -459,8 +486,10 @@ The concurrency model is:
 - Atomic loads for mode, self-disable, and immutable policy pointers.
 - A short registry-shard lock for target lookup or admission.
 - A short per-target lock for evidence and state transitions.
+- A short change-journal lock for recording or copying candidate changes.
 - Immutable copies for policy evaluation and network attempts.
-- No registry and target lock held at the same time.
+- One lock order: registry shard, then target, then change journal. A shard
+  lock covers a target lock only while retiring a replaced idle target.
 - No lock held during transport I/O, backoff, logging, or a host callback.
 
 Removing a target from the registry does not invalidate a pointer already held
@@ -534,7 +563,9 @@ admitted. Transient lookup values cannot retain a caller's complete URL.
 A target idle for 15 minutes may be replaced when a miss reaches a full
 registry and its shard contains an expired entry. Replacement always allocates
 fresh target state. An in-flight request may finish against its old reachable
-state but cannot write into the replacement. Public capacity and expiry
+state but cannot write into the replacement. The old target is retired before
+removal, so a late completion can still update aggregate counts but cannot
+publish a decision or record a candidate change. Public capacity and expiry
 options remain deferred.
 
 ## 12. Observation Model
@@ -635,9 +666,9 @@ The initial closed set is:
 | `ClientError` | Request-side failure that mitigation cannot repair |
 | `Degrading` | Sustained latency or error movement from baseline |
 
-`None` is an internal sentinel when evidence supports no class. The exact
-exported spelling belongs to public API design. Internal policy must not invent
-unbounded diagnosis labels.
+`None` is the sentinel when evidence supports no class. The public API exports
+it as `DiagnosisNone`. Internal policy must not invent unbounded diagnosis
+labels.
 
 ### 13.3 Deterministic Rule Order
 
@@ -693,6 +724,13 @@ Safety precedence is:
 7. Retry budget.
 
 A stale policy version or expired plan is rejected before use.
+
+The implemented version 1 evaluator uses only the published diagnosis:
+class, readiness, and expiry. Its readiness gate is the first implemented
+safety precedence rule. Mode, request eligibility, breaker, timeout, and
+budget inputs are added with the controls that consume them. No consumer
+exists yet, so plans are reported rather than checked for version or expiry
+before use.
 
 ## 15. Mitigation Controls
 
@@ -775,6 +813,11 @@ Observe records the candidate but does not create a new deadline.
 
 Every cell describes eligibility, not a guaranteed action.
 
+Policy version 1 implements only the retry candidate for `Transient` and the
+breaker-open candidate for `DependencyDown` and `Saturation`, each gated on
+`Ready` evidence. Close, probe, watch, limited-retry, and timeout candidates
+are not implemented.
+
 ## 16. Observability and Privacy
 
 ### 16.1 Audit Record
@@ -791,6 +834,12 @@ Each proposed or applied action includes bounded fields:
 - Policy version.
 - Evidence and action expiry.
 - Budget decision where relevant.
+
+`Transport.Report` implements a pull-based subset. Each decision carries its
+evaluation and expiry times, normalized target identity, readiness, diagnosis,
+ordered reason codes, recent and historical evidence summaries, policy
+version, and candidates. Mode, applied state, and budget decisions are added
+with mitigation. The diagnosis and plan share one expiry.
 
 ### 16.2 Excluded Data
 
@@ -810,6 +859,10 @@ Metric labels come from closed enums and bounded target aliases. A raw path,
 raw hostname supplied by untrusted input, or error string is not a metric
 label.
 
+`Transport.Report` exposes normalized hostnames for review. They can come from
+untrusted input, so hosts should not turn them into metric labels unless the
+destination set is trusted and bounded.
+
 ### 16.4 Host-Provided Sinks
 
 Curo cannot preempt an arbitrary Go callback that blocks forever. Any
@@ -820,8 +873,10 @@ host-provided sink:
 - Is not called from the maintenance worker.
 - Is not given mutable internal state.
 
-The public API review chooses a pull or callback delivery contract. The core
-must not create a goroutine per event.
+The implemented delivery contract is pull-based. `Transport.Report` copies
+bounded state on the caller's goroutine and invokes no host callback. Callback
+sinks and structured logging remain deferred and must follow the rules above.
+The core must not create a goroutine per event.
 
 Future internal failure logging must be best effort and rate-limited. A logging
 failure cannot replace the request result.
@@ -843,7 +898,40 @@ arbitrary callback, Curo cannot preempt an implementation that blocks forever.
 The snapshot contains no target identifiers or per-target evidence. Its fields
 are sampled independently under concurrency. Overflow never exceeds observed
 requests, and self-disabled state implies at least three contained failures.
-Detailed audit records, callbacks, and logging sinks remain deferred.
+Per-target decisions are available through `Transport.Report`; callbacks and
+logging sinks remain deferred.
+
+### 16.6 Decision Report
+
+`Transport.Report` returns a detached snapshot with two bounded parts:
+
+- `Targets` holds the latest published decision for each tracked regular
+  target, at most 128, ordered by scheme, host, port, and method class. A
+  target without an evaluation appears with zero times and `Cold` readiness.
+  The overflow aggregate is never reported.
+- `Changes` holds the latest 256 candidate changes in ascending sequence
+  order. Sequence numbers start at 1 and are contiguous within one transport,
+  so a gap between reads means older changes were overwritten.
+
+A change is recorded when an evaluation selects a different candidate set, or
+the same non-empty set for a different diagnosis class. Renewing an unchanged
+decision is not a change. The journal is not a target lifecycle log: eviction
+and staleness are not recorded. Candidates that lapse while a target is idle
+are cleared, and the change recorded, at its next dependency-relevant
+completion. A change can name a target that has since been replaced.
+
+Report never evaluates evidence or reads the clock. An idle target keeps its
+last decision, so consumers compare `ExpiresAt` with the current time. The
+journal is copied before target decisions, so a reported decision is never
+older than a retained change from the same tracked target. Every lock taken by
+a report is short and released by a deferred unlock, so a contained failure
+cannot leave internal state locked.
+
+Report is safe for concurrent use and remains readable after close, in `Off`,
+and after self-disable. A Curo failure while building a report returns an
+empty report and counts toward `InternalFailures` and self-disable. Report
+allocates its detached copies, so it suits periodic review rather than
+per-request use.
 
 ## 17. Lifecycle
 
@@ -903,8 +991,9 @@ Close is idempotent:
 
 In-flight requests use their captured snapshots and results. After close, new
 requests use direct pass-through, mode changes return `ErrClosed`, and the
-configured mode and aggregate statistics remain readable. Close retains the
-bounded observer state so an in-flight postflight can finish safely.
+configured mode, aggregate statistics, and decision report remain readable.
+Close retains the bounded observer state so an in-flight postflight can finish
+safely.
 
 ## 18. Failure Model
 
@@ -912,6 +1001,7 @@ bounded observer state so an in-flight postflight can finish safely.
 | ------- | --------------- |
 | Preflight Curo panic | Report, count, call original transport once |
 | Postflight Curo panic | Report, count, return captured result |
+| Decision report Curo panic | Count, return an empty report |
 | User observer panic | Contain and report outside locks |
 | Maintenance panic | Self-disable and stop worker |
 | Registry full | Use bounded overflow state |
@@ -943,9 +1033,11 @@ Latency and allocation benchmarks compare Curo modes with the same base
 transport. The initial harness establishes a local baseline; numerical
 regression gates wait for a repeatable CI benchmark environment.
 
-The observer and diagnoser store 9,328 bytes of bounded target state on 64-bit
-platforms. The 128 regular targets plus overflow aggregate therefore use about
-1.15 MiB, excluding bounded map and key overhead.
+The observer, diagnoser, and policy store 9,456 bytes of bounded target state
+on 64-bit platforms. The 128 regular targets plus overflow aggregate therefore
+use about 1.16 MiB, and the 256-entry change journal adds 38,928 bytes,
+excluding bounded map and key overhead. A report allocates detached copies of
+at most 128 decisions and 256 changes.
 Benchmarks cover Off and warm Observe paths with an already canonical target;
 both perform zero Curo heap allocations per request with the benchmark base
 transport. Inputs that require case or IP normalization may use bounded
@@ -1081,12 +1173,21 @@ The initial contract is:
 - A preflight stage failure delegates the untouched original request exactly
   once. A postflight stage failure returns the already captured response and
   error without another attempt.
-- Three internal stage failures within one minute permanently bypass later
-  stages for that instance. Aggregate failure count and self-disable state are
-  visible through `Stats`.
+- Three internal failures within one minute, including failures while
+  building a report, permanently bypass later stages for that instance.
+  Aggregate failure count and self-disable state are visible through `Stats`.
 - `Observe` and `Enforce` record bounded completed-attempt evidence and
-  evaluate internal readiness and diagnosis. `Off`, closed, and self-disabled
-  paths do not collect new evidence.
+  evaluate readiness, diagnosis, and control candidates. `Off`, closed, and
+  self-disabled paths do not collect new evidence.
+- `Report` returns a detached snapshot of at most 128 target decisions and the
+  latest 256 candidate changes. It never evaluates evidence, is safe for
+  concurrent use, and remains readable after close, in `Off`, and after
+  self-disable. A Curo failure while building it returns an empty `Report`.
+- Decisions expose normalized target identity, readiness, diagnosis, ordered
+  reason codes, recent and historical evidence summaries, policy version,
+  candidates, and evaluation and expiry times. Report enums are closed, their
+  `String` methods return stable names, and candidates are never applied in
+  any mode.
 - Target state is bounded to 128 regular identities and one non-actionable
   overflow aggregate. Paths, queries, headers, bodies, URL user information,
   and raw error text are not retained.
@@ -1095,10 +1196,11 @@ The initial contract is:
 
 The following surfaces remain deferred until their implementations exist:
 
-- Public diagnosis and readiness types.
-- Public route classification and per-target evidence access.
+- Public route classification, latency evidence, and detailed per-target
+  evidence access.
 - Replay opt-in for unsafe methods.
-- Audit delivery through pull, callback, or both.
+- Callback or logging delivery of decisions and candidate changes.
+- Mode, applied-action, and budget fields in decision records.
 - Detailed internal-failure events and logging sinks.
 - Fail-fast and internal-failure error types.
 - Result selection after multiple completed attempts.

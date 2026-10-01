@@ -12,6 +12,7 @@ import (
 	"unsafe"
 
 	"github.com/raj1kshtz/curo/internal/diagnose"
+	"github.com/raj1kshtz/curo/internal/policy"
 )
 
 func TestClassifyUsesExclusiveOutcomes(t *testing.T) {
@@ -379,24 +380,60 @@ func TestRecordTickExpandsBothBounds(t *testing.T) {
 func TestEvidenceStateCannotRetainSensitiveValues(t *testing.T) {
 	t.Parallel()
 
-	types := []reflect.Type{
-		reflect.TypeOf(baselineBucket{}),
-		reflect.TypeOf(diagnosisState{}),
-		reflect.TypeOf(diagnose.Result{}),
-		reflect.TypeOf(evidenceBucket{}),
-		reflect.TypeOf(target{}),
-	}
-	for _, valueType := range types {
-		for index := 0; index < valueType.NumField(); index++ {
-			field := valueType.Field(index)
-			switch field.Type.Kind() {
-			case reflect.String, reflect.Interface, reflect.Map, reflect.Slice:
-				t.Errorf(
-					"%s.%s can retain unbounded or sensitive values",
-					valueType.Name(),
-					field.Name,
-				)
+	// The normalized hostname is the only retained text. It is bounded to 253
+	// bytes and cloned at admission.
+	allowedStrings := map[string]int{"targetKey.host": 0}
+	visited := make(map[reflect.Type]bool)
+
+	var inspect func(reflect.Type)
+	inspect = func(valueType reflect.Type) {
+		if visited[valueType] {
+			return
+		}
+		visited[valueType] = true
+
+		switch valueType.Kind() {
+		case reflect.Pointer, reflect.Array:
+			inspect(valueType.Elem())
+		case reflect.Struct:
+			for index := 0; index < valueType.NumField(); index++ {
+				field := valueType.Field(index)
+				name := valueType.Name() + "." + field.Name
+				switch field.Type.Kind() {
+				case reflect.String:
+					if _, allowed := allowedStrings[name]; !allowed {
+						t.Errorf("%s can retain sensitive text", name)
+						continue
+					}
+					allowedStrings[name]++
+				case reflect.Interface,
+					reflect.Map,
+					reflect.Slice,
+					reflect.Func,
+					reflect.Chan,
+					reflect.UnsafePointer:
+					t.Errorf("%s can retain unbounded or sensitive values", name)
+				default:
+					inspect(field.Type)
+				}
 			}
+		}
+	}
+	inspect(reflect.TypeOf(target{}))
+
+	for name, visits := range allowedStrings {
+		if visits != 1 {
+			t.Errorf("%s inspected %d times, want 1", name, visits)
+		}
+	}
+	for _, valueType := range []reflect.Type{
+		reflect.TypeOf(journal{}),
+		reflect.TypeOf(change{}),
+		reflect.TypeOf(diagnose.Result{}),
+		reflect.TypeOf(policy.Plan{}),
+	} {
+		if !visited[valueType] {
+			t.Errorf("%s was not inspected", valueType)
 		}
 	}
 
@@ -405,12 +442,22 @@ func TestEvidenceStateCannotRetainSensitiveValues(t *testing.T) {
 		t.Errorf("target size = %d bytes, want at most %d", got, maximumTargetBytes)
 	}
 	if unsafe.Sizeof(uintptr(0)) == 8 {
-		const documentedTargetBytes = 9_328
+		const (
+			documentedTargetBytes  = 9_456
+			documentedJournalBytes = 38_928
+		)
 		if got := unsafe.Sizeof(target{}); got != documentedTargetBytes {
 			t.Errorf(
 				"64-bit target size = %d bytes, documented as %d",
 				got,
 				documentedTargetBytes,
+			)
+		}
+		if got := unsafe.Sizeof(journal{}); got != documentedJournalBytes {
+			t.Errorf(
+				"64-bit journal size = %d bytes, documented as %d",
+				got,
+				documentedJournalBytes,
 			)
 		}
 	}

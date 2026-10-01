@@ -223,6 +223,58 @@ func TestNilGuardFailsSafe(t *testing.T) {
 	}
 }
 
+func TestContainRunsAfterDisableAndCountsFailures(t *testing.T) {
+	t.Parallel()
+
+	state := New()
+	for range failureThreshold {
+		if outcome := state.Run(returnInternalError); outcome != Failed {
+			t.Fatalf("disabling outcome = %v, want Failed", outcome)
+		}
+	}
+	if !state.Disabled() {
+		t.Fatal("guard enabled after failure threshold, want disabled")
+	}
+
+	var calls atomic.Int32
+	if outcome := state.Contain(func() error {
+		calls.Add(1)
+		return nil
+	}); outcome != Completed {
+		t.Fatalf("disabled Contain() outcome = %v, want Completed", outcome)
+	}
+	if outcome := state.Contain(func() error {
+		calls.Add(1)
+		panic("read failure")
+	}); outcome != Failed {
+		t.Fatalf("disabled Contain() panic outcome = %v, want Failed", outcome)
+	}
+	if outcome := state.Contain(func() error {
+		calls.Add(1)
+		return errors.New("read failure")
+	}); outcome != Failed {
+		t.Fatalf("disabled Contain() error outcome = %v, want Failed", outcome)
+	}
+
+	if got := calls.Load(); got != 3 {
+		t.Errorf("Contain() calls = %d, want 3", got)
+	}
+	if got := state.Failures(); got != failureThreshold+2 {
+		t.Errorf("Failures() = %d, want %d", got, failureThreshold+2)
+	}
+
+	var nilGuard *Guard
+	if outcome := nilGuard.Contain(func() error {
+		calls.Add(1)
+		return nil
+	}); outcome != Skipped {
+		t.Fatalf("nil Guard Contain() outcome = %v, want Skipped", outcome)
+	}
+	if got := calls.Load(); got != 3 {
+		t.Errorf("nil Guard Contain() ran operation; calls = %d, want 3", got)
+	}
+}
+
 func TestZeroValueGuardContainsFailure(t *testing.T) {
 	t.Parallel()
 

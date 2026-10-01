@@ -1,4 +1,4 @@
-// Package guard contains the failure boundary for Curo-owned request work.
+// Package guard contains the failure boundary for Curo-owned work.
 package guard
 
 import (
@@ -73,8 +73,22 @@ func (g *Guard) Failures() uint64 {
 // Run never holds the failure-window lock while operation executes. Returned
 // errors and recovered panics both contribute to the same bounded failure
 // signal. A disabled or nil Guard skips operation.
-func (g *Guard) Run(operation func() error) (outcome Outcome) {
+func (g *Guard) Run(operation func() error) Outcome {
 	if g == nil || g.disabled.Load() {
+		return Skipped
+	}
+
+	return g.Contain(operation)
+}
+
+// Contain executes operation inside the same recovery boundary as Run, even
+// after the Guard has disabled adaptive stages.
+//
+// Contain is for read-only Curo-owned work that remains available after
+// self-disable. Returned errors and recovered panics are still counted. A nil
+// Guard skips operation.
+func (g *Guard) Contain(operation func() error) (outcome Outcome) {
+	if g == nil {
 		return Skipped
 	}
 

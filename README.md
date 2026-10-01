@@ -12,8 +12,8 @@ application to tune static thresholds.
 
 > [!IMPORTANT]
 > Curo is pre-alpha and has no release. The current API provides transparent
-> transport behavior only; adaptive observation and mitigation are not
-> implemented yet.
+> transport behavior and internal failure-containment infrastructure. Adaptive
+> observation and mitigation are not implemented yet.
 
 ## Current status
 
@@ -22,7 +22,7 @@ application to tune static thresholds.
 | Architecture decisions | Accepted and documented in [`docs/adr`](docs/adr/) |
 | Engine design | Documented in [`docs/design/engine.md`](docs/design/engine.md) |
 | Public Go API | Initial transport and lifecycle contract |
-| Runtime implementation | Transparent delegation to a host-owned transport |
+| Runtime implementation | Direct delegation with guarded internal stage boundaries |
 | Adaptive behavior | Not yet implemented |
 | Performance data | Added after adaptive runtime code exists |
 
@@ -51,9 +51,16 @@ close the base transport. A nil base is rejected, mode access is safe under
 concurrency, and `Close` is idempotent. The application closes the returned
 `curo.Transport` during shutdown.
 
-At this stage, every mode delegates the original request exactly once and
-returns the base response or error unchanged. Closing Curo keeps that direct
-pass-through path available.
+At this stage, no adaptive request stages are installed. Every mode delegates
+the original request exactly once and returns the base response or error
+unchanged. Closing Curo keeps that direct pass-through path available.
+
+The transport now separates optional Curo-owned preflight and postflight work
+from the unguarded base transport call. A preflight failure falls back to the
+original request, while a postflight failure preserves the captured transport
+result. Repeated internal failures permanently select direct pass-through for
+that instance. User-visible internal-failure reporting and reset remain
+deferred until an adaptive stage is introduced.
 
 ## Intended scope
 
@@ -87,8 +94,10 @@ constraint is therefore host application inviolability:
 - The wrapped transport remains host-owned and keeps its existing panic
   semantics.
 
-These are design requirements, not claims about code that has not been written.
-The full contract is recorded in
+The guarded request-stage boundary and bounded self-disable signal are
+implemented. Observation, diagnosis, mitigation, and user-visible
+internal-failure reporting remain design requirements. The full contract is
+recorded in
 [ADR-0002](docs/adr/0002-host-application-inviolability.md).
 
 ## Architecture
@@ -110,8 +119,8 @@ project governance material.
 
 The next milestones are:
 
-1. Implement guarded failure containment around Curo-owned work.
-2. Add bounded observation and diagnosis.
+1. Add bounded observation and diagnosis.
+2. Add auditable internal-failure and proposed-action reporting.
 3. Introduce mitigation controls with tests and benchmarks.
 4. Publish operational guidance after behavior is measured.
 

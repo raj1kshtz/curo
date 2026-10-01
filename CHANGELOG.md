@@ -15,7 +15,7 @@ changes will always be listed here under **Changed** or **Removed**.
 - Project foundation: Apache-2.0 licence, contribution guide, code of conduct, security
   policy, governance model and CI pipeline.
 - ADR lifecycle and authoring guidance, plus Architecture Decision Records
-  `0001`–`0007` covering the embedded Go library, host application
+  `0001` through `0007` covering the embedded Go library, host application
   inviolability, adaptive policy, dependencies, operating modes, retry
   budgets, and package boundaries.
 - Engine high-level design with reviewed context, component, runtime,
@@ -23,5 +23,8 @@ changes will always be listed here under **Changed** or **Removed**.
 - Initial public transport API with explicit base ownership, validated
   operating modes, concurrency-safe mode changes, idempotent lifecycle, and
   transparent request delegation.
+- Internal request guard with stage-aware failure containment, a bounded
+  rolling failure signal, atomic self-disable, and direct pass-through after
+  repeated internal failures.
 
 [Unreleased]: https://github.com/raj1kshtz/curo/commits/main

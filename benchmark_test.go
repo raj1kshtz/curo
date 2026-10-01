@@ -27,7 +27,7 @@ func BenchmarkTransportRoundTrip(b *testing.B) {
 		return baseResponse, nil
 	})
 
-	for _, mode := range []curo.Mode{curo.Off, curo.Observe} {
+	for _, mode := range []curo.Mode{curo.Off, curo.Observe, curo.Enforce} {
 		b.Run(modeName(mode), func(b *testing.B) {
 			transport, newErr := curo.New(base, curo.WithMode(mode))
 			if newErr != nil {
@@ -63,6 +63,8 @@ func modeName(mode curo.Mode) string {
 		return "Off"
 	case curo.Observe:
 		return "Observe"
+	case curo.Enforce:
+		return "Enforce"
 	default:
 		return "Other"
 	}

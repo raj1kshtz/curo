@@ -443,7 +443,7 @@ func TestEvidenceStateCannotRetainSensitiveValues(t *testing.T) {
 	}
 	if unsafe.Sizeof(uintptr(0)) == 8 {
 		const (
-			documentedTargetBytes  = 9_456
+			documentedTargetBytes  = 9_464
 			documentedJournalBytes = 38_928
 		)
 		if got := unsafe.Sizeof(target{}); got != documentedTargetBytes {

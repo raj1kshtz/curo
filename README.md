@@ -14,8 +14,9 @@ application to tune static thresholds.
 > Curo is pre-alpha and has no release. The current API provides transparent
 > transport behavior, bounded request observation, aggregate runtime
 > statistics, and a pull-based decision report. Curo evaluates readiness,
-> deterministic diagnoses, and control candidates, but mitigation is not
-> implemented: no candidate is applied, and `Enforce` behaves like `Observe`.
+> deterministic diagnoses, and control candidates. `Enforce` applies only the
+> retry candidate, as at most one budgeted retry of a replay-safe request;
+> breaker and timeout controls are not implemented.
 
 ## Current status
 
@@ -24,8 +25,8 @@ application to tune static thresholds.
 | Architecture decisions | Accepted and documented in [`docs/adr`](docs/adr/) |
 | Engine design | Documented in [`docs/design/engine.md`](docs/design/engine.md) |
 | Public Go API | Transport, lifecycle, operating modes, aggregate statistics, and decision reports |
-| Runtime implementation | Guarded observation, diagnosis, and candidate evaluation around direct delegation |
-| Adaptive behavior | Readiness, diagnosis, and control candidates reported; mitigation pending |
+| Runtime implementation | Guarded observation, diagnosis, candidate evaluation, and budgeted retries around direct delegation |
+| Adaptive behavior | Readiness, diagnosis, and candidates reported; retries applied in `Enforce`; breaker and timeouts pending |
 | Performance data | Allocation benchmarks added; regression gates pending |
 
 Public documentation is updated as features become real, rather than
@@ -53,9 +54,10 @@ close the base transport. A nil base is rejected, mode access is safe under
 concurrency, and `Close` is idempotent. The application closes the returned
 `curo.Transport` during shutdown.
 
-Every mode delegates the original request exactly once and returns the base
-response or error unchanged. `Observe` and `Enforce` record completed attempts
-and evaluate bounded diagnoses and control candidates; `Off`, closed, and
+`Off` and `Observe` delegate the original request exactly once and return the
+base response or error unchanged, and so does `Enforce` for every request it
+does not retry. `Observe` and `Enforce` record completed initial attempts and
+evaluate bounded diagnoses and control candidates; `Off`, closed, and
 self-disabled transports use direct pass-through without collecting new
 evidence.
 
@@ -82,6 +84,12 @@ fmt.Printf(
     stats.OverflowRequests,
     stats.InternalFailures,
     stats.SelfDisabled,
+)
+fmt.Printf(
+    "retries=%d retry_successes=%d budget_denials=%d\n",
+    stats.RetryAttempts,
+    stats.RetrySuccesses,
+    stats.RetryBudgetDenials,
 )
 ```
 
@@ -125,8 +133,8 @@ Policy version 1 selects `CandidateRetry` for a `Transient` diagnosis and
 require `Ready` evidence; a matching diagnosis without it selects nothing and
 adds `ReasonReadinessRequired`. `Changes` keeps the latest 256 candidate
 changes with contiguous sequence numbers, so a gap between reads means older
-changes were overwritten. Candidates are reported for review and are never
-applied, including in `Enforce` mode.
+changes were overwritten. `Enforce` applies `CandidateRetry` as described
+below. `CandidateBreakerOpen` is reported for review only.
 
 Report targets use the same normalized identity as observation. Hostnames can
 be influenced by untrusted input when an application calls user-supplied URLs,
@@ -135,12 +143,49 @@ concurrent use and remains readable after `Close`, in `Off` mode, and after
 self-disable. If Curo fails while building a report, it returns an empty
 report and counts the failure in `InternalFailures`.
 
+In `Enforce` mode, Curo retries a request at most once, and only when all of
+these hold:
+
+- The method is `GET`, `HEAD`, `OPTIONS`, `TRACE`, or empty, and the body is
+  absent or reproducible through `GetBody`.
+- The initial attempt failed with a transport error, or with a 502, 503, or
+  504 response without a `Retry-After` header. Caller cancellations and
+  deadlines, 429, and other statuses are never retried.
+- The target's current decision includes `CandidateRetry` and has not
+  expired, both after the initial attempt and again just before the retry.
+- The caller has not canceled the request through its context or the
+  deprecated `Cancel` channel, and the context deadline leaves room for the
+  backoff and another attempt as long as the first.
+- The target and instance retry budgets each hold a token.
+- The mode has not changed since the request started, even temporarily, the
+  transport has not been closed, and Curo has not self-disabled.
+
+Each recorded initial attempt to a tracked target adds a tenth of a token to
+its target budget, capped at 10 tokens, and to the instance budget, capped at
+50 tokens. Budgets start empty, retries never refill them, and `Observe` funds
+them without spending, so credit earned while observing is available after a
+switch to `Enforce`. These values are fixed, and unsafe methods cannot opt in
+yet. `RetryBudgetDenials` counts retries that met every other condition but
+found a budget empty.
+
+Before a retry, Curo waits a random 25 to 100 milliseconds, ending early if
+the caller's context is done or the request's `Cancel` channel closes. An
+`http.Client` `Timeout` applies through both, so it bounds the initial
+attempt, the backoff, and the retry together. The retry sends a clone of the
+original request, with a fresh body from `GetBody` when there is one. Once the
+retry starts, Curo closes the discarded first response body without reading
+it, and `RoundTrip` returns the retry's response or error. Otherwise the first
+result is returned untouched. Retries are not recorded as evidence. A decision
+refreshes only after the previous one expires, so a failure that arrives
+while a `Healthy` decision is still current is not retried.
+
 The transport now separates optional Curo-owned preflight and postflight work
 from the unguarded base transport call. A preflight failure falls back to the
-original request, while a postflight failure preserves the captured transport
-result. Repeated internal failures permanently select direct pass-through for
-that instance. Aggregate failure counts and self-disable state remain readable
-through `Stats`; detailed failure events, logging sinks, and reset are deferred.
+original request, while a postflight or retry-preparation failure preserves
+the captured transport result. Repeated internal failures permanently select
+direct pass-through for that instance. Aggregate failure counts and
+self-disable state remain readable through `Stats`; detailed failure events,
+logging sinks, and reset are deferred.
 
 ## Intended scope
 
@@ -176,9 +221,9 @@ constraint is therefore host application inviolability:
 
 The guarded request-stage boundary, bounded observer and historical baseline,
 deterministic diagnoser, candidate policy, guarded decision report, aggregate
-internal-fault visibility, and self-disable signal are implemented. Mitigation
-and applied-action auditing remain design requirements. The full contract is
-recorded in
+internal-fault visibility, self-disable signal, and budgeted replay-safe
+retries are implemented. Breaker and timeout mitigation and applied-action
+auditing remain design requirements. The full contract is recorded in
 [ADR-0002](docs/adr/0002-host-application-inviolability.md).
 
 ## Architecture
@@ -200,10 +245,8 @@ project governance material.
 
 The next milestones are:
 
-1. Enforce retry candidates through aggregate retry budgets and replay-safety
-   checks.
-2. Add adaptive breaker and timeout controls with safety tests and benchmarks.
-3. Publish operational guidance after behavior is measured.
+1. Add adaptive breaker and timeout controls with safety tests and benchmarks.
+2. Publish operational guidance after behavior is measured.
 
 ## Contributing
 

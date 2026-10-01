@@ -36,7 +36,8 @@ changes will always be listed here under **Changed** or **Removed**.
   immutable results.
 - Policy version 1 control candidates: a `Ready` `Transient` diagnosis selects
   a retry candidate, and a `Ready` `DependencyDown` or `Saturation` diagnosis
-  selects a breaker-open candidate. Candidates are reported but never applied.
+  selects a breaker-open candidate. Only the retry candidate is applied, and
+  only in `Enforce`.
 - `Transport.Report` with detached per-target decisions covering normalized
   identity, readiness, diagnosis, ordered reason codes, recent and historical
   evidence summaries, policy version, candidates, and evaluation and expiry
@@ -44,5 +45,14 @@ changes will always be listed here under **Changed** or **Removed**.
   numbers.
 - Guarded report construction: a Curo failure returns an empty report and
   counts toward `InternalFailures` and self-disable.
+- Budgeted retries in `Enforce`: a replay-safe `GET`, `HEAD`, `OPTIONS`, or
+  `TRACE` request whose initial attempt failed with a transport error, or with
+  a 502, 503, or 504 response without `Retry-After`, is retried at most once
+  when its target's current decision selects the retry candidate. Lock-free
+  target and instance budgets funded by recorded initial attempts bound retry
+  volume, a cancellable 25 to 100 millisecond backoff precedes each retry, and
+  a mode change, `Close`, or self-disable withdraws a retry that has not
+  started.
+- `Stats` fields `RetryAttempts`, `RetrySuccesses`, and `RetryBudgetDenials`.
 
 [Unreleased]: https://github.com/raj1kshtz/curo/commits/main

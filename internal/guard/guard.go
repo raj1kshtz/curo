@@ -84,9 +84,9 @@ func (g *Guard) Run(operation func() error) Outcome {
 // Contain executes operation inside the same recovery boundary as Run, even
 // after the Guard has disabled adaptive stages.
 //
-// Contain is for read-only Curo-owned work that remains available after
-// self-disable. Returned errors and recovered panics are still counted. A nil
-// Guard skips operation.
+// Contain is for Curo-owned work that must still run after self-disable, such
+// as building a report or closing a body Curo discarded. Returned errors and
+// recovered panics are still counted. A nil Guard skips operation.
 func (g *Guard) Contain(operation func() error) (outcome Outcome) {
 	if g == nil {
 		return Skipped

@@ -291,7 +291,7 @@ func newClockedTransport(
 	}
 	observer := observe.NewWithClock(now)
 	transport.observer = observer
-	transport.stages = observationStages{observer: observer}
+	transport.stages = newAdaptiveStages(observer, &transport.retries)
 	transport.reports = observer.Report
 
 	return transport

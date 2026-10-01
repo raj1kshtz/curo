@@ -8,6 +8,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/raj1kshtz/curo/internal/retry"
 )
 
 const (
@@ -101,9 +103,10 @@ type target struct {
 	buckets  [observationBucketCount]evidenceBucket
 	baseline [baselineBucketCount]baselineBucket
 
-	diagnosis diagnosisState
-	mu        sync.Mutex
-	lastSeen  atomic.Int64
+	diagnosis   diagnosisState
+	mu          sync.Mutex
+	lastSeen    atomic.Int64
+	retryBudget retry.Budget
 
 	actionable bool
 	retired    bool

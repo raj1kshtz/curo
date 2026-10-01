@@ -13,7 +13,7 @@ func TestRegistryReusesTargetsAndEnforcesGlobalCapacity(t *testing.T) {
 
 	const capacity = 4
 
-	registry := newRegistry(capacity, 8, time.Hour)
+	registry := newRegistry(capacity, 8, time.Hour, nil)
 	keys := make([]targetKey, 0, capacity+1)
 	for index := 0; index < capacity+1; index++ {
 		keys = append(keys, testTargetKey(fmt.Sprintf("host-%d.example", index)))
@@ -66,7 +66,7 @@ func TestRegistryReplacesExpiredTargetWithFreshState(t *testing.T) {
 
 	const idleTTL = 10 * time.Second
 
-	registry := newRegistry(1, 1, idleTTL)
+	registry := newRegistry(1, 1, idleTTL, nil)
 	oldKey := testTargetKey("old.example")
 	newKey := testTargetKey("new.example")
 
@@ -104,7 +104,7 @@ func TestRegistryUsesDeterministicVictimForEqualAge(t *testing.T) {
 
 	const idleTTL = time.Second
 
-	registry := newRegistry(2, 1, idleTTL)
+	registry := newRegistry(2, 1, idleTTL, nil)
 	firstKey := testTargetKey("a.example")
 	secondKey := testTargetKey("b.example")
 	replacementKey := testTargetKey("c.example")
@@ -139,7 +139,7 @@ func TestRegistryDoesNotExpireOnBackwardClockOrDisabledTTL(t *testing.T) {
 		key: newTarget(10, true),
 	}
 
-	registry := newRegistry(1, 1, time.Second)
+	registry := newRegistry(1, 1, time.Second, nil)
 	if _, found := registry.expiredVictim(targets, 9); found {
 		t.Fatal("backward clock expired target")
 	}
@@ -153,7 +153,7 @@ func TestRegistryDoesNotExpireOnBackwardClockOrDisabledTTL(t *testing.T) {
 func TestRegistryConstructionNormalizesInvalidBounds(t *testing.T) {
 	t.Parallel()
 
-	registry := newRegistry(-1, 0, -time.Second)
+	registry := newRegistry(-1, 0, -time.Second, nil)
 	if registry.capacity != 0 {
 		t.Errorf("capacity = %d, want 0", registry.capacity)
 	}
@@ -182,7 +182,7 @@ func TestRegistryHandlesNilAndInvalidTrackedState(t *testing.T) {
 		t.Errorf("nil registry tracked targets = %d, want 0", got)
 	}
 
-	registry = newRegistry(1, 1, time.Second)
+	registry = newRegistry(1, 1, time.Second, nil)
 	registry.tracked.Store(-1)
 	if got := registry.trackedTargets(); got != 0 {
 		t.Errorf("negative tracked targets = %d, want 0", got)
@@ -197,7 +197,7 @@ func TestRegistryAdmissionIsSafeUnderConcurrency(t *testing.T) {
 		workers  = 128
 	)
 
-	registry := newRegistry(capacity, 8, time.Hour)
+	registry := newRegistry(capacity, 8, time.Hour, nil)
 	start := make(chan struct{})
 	var regular atomic.Int32
 	var overflow atomic.Int32
@@ -254,7 +254,7 @@ func testTargetKey(host string) targetKey {
 		host:   host,
 		port:   443,
 		scheme: schemeHTTPS,
-		method: methodRead,
+		method: MethodRead,
 	}
 }
 

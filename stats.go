@@ -19,7 +19,8 @@ type Stats struct {
 	// non-actionable overflow aggregate.
 	OverflowRequests uint64
 
-	// InternalFailures is the number of contained Curo-owned stage failures.
+	// InternalFailures is the number of contained Curo-owned failures in
+	// request stages and Report.
 	InternalFailures uint64
 
 	// SelfDisabled reports whether repeated internal failures permanently

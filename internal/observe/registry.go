@@ -1,6 +1,7 @@
 package observe
 
 import (
+	"slices"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -14,6 +15,7 @@ const (
 
 type registry struct {
 	overflow *target
+	changes  *journal
 	shards   []registryShard
 
 	capacity int64
@@ -26,7 +28,12 @@ type registryShard struct {
 	mu      sync.Mutex
 }
 
-func newRegistry(capacity, shardCount int, idleTTL time.Duration) *registry {
+func newRegistry(
+	capacity int,
+	shardCount int,
+	idleTTL time.Duration,
+	changes *journal,
+) *registry {
 	if capacity < 0 {
 		capacity = 0
 	}
@@ -40,6 +47,7 @@ func newRegistry(capacity, shardCount int, idleTTL time.Duration) *registry {
 	registry := &registry{
 		shards:   make([]registryShard, shardCount),
 		overflow: newTarget(0, false),
+		changes:  changes,
 		capacity: int64(capacity),
 		idleTTL:  int64(idleTTL),
 	}
@@ -76,20 +84,32 @@ func (registry *registry) get(
 	}
 
 	if registry.reserve() {
-		admitted := newTarget(tick, true)
-		shard.targets[key.retained()] = admitted
-		return admitted, false
+		return registry.admitLocked(shard, key, tick), false
 	}
 
 	if victim, found := registry.expiredVictim(shard.targets, tick); found {
+		// Lock order is shard, then target. No path takes a shard lock while
+		// holding a target lock.
+		shard.targets[victim].retire()
 		delete(shard.targets, victim)
 
-		admitted := newTarget(tick, true)
-		shard.targets[key.retained()] = admitted
-		return admitted, false
+		return registry.admitLocked(shard, key, tick), false
 	}
 
 	return registry.overflow, true
+}
+
+func (registry *registry) admitLocked(
+	shard *registryShard,
+	key targetKey,
+	tick int64,
+) *target {
+	admitted := newTarget(tick, true)
+	admitted.key = key.retained()
+	admitted.changes = registry.changes
+	shard.targets[admitted.key] = admitted
+
+	return admitted
 }
 
 func (registry *registry) reserve() bool {
@@ -145,4 +165,32 @@ func (registry *registry) trackedTargets() uint64 {
 	}
 
 	return uint64(tracked)
+}
+
+// regularTargets returns tracked regular targets ordered by identity.
+func (registry *registry) regularTargets() []*target {
+	if registry == nil {
+		return nil
+	}
+
+	targets := make([]*target, 0, registry.trackedTargets())
+	for index := range registry.shards {
+		targets = registry.shards[index].appendTargets(targets)
+	}
+	slices.SortFunc(targets, func(left, right *target) int {
+		return left.key.compare(right.key)
+	})
+
+	return targets
+}
+
+func (shard *registryShard) appendTargets(targets []*target) []*target {
+	shard.mu.Lock()
+	defer shard.mu.Unlock()
+
+	for _, state := range shard.targets {
+		targets = append(targets, state)
+	}
+
+	return targets
 }

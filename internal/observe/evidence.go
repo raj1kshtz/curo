@@ -95,6 +95,9 @@ type evidenceBucket struct {
 }
 
 type target struct {
+	changes *journal
+	key     targetKey
+
 	buckets  [observationBucketCount]evidenceBucket
 	baseline [baselineBucketCount]baselineBucket
 
@@ -103,6 +106,7 @@ type target struct {
 	lastSeen  atomic.Int64
 
 	actionable bool
+	retired    bool
 }
 
 func newTarget(tick int64, actionable bool) *target {
@@ -125,6 +129,15 @@ func (target *target) touch(tick int64) {
 			return
 		}
 	}
+}
+
+// retire marks a target replaced in the registry. In-flight tokens may still
+// record evidence, but a retired target never evaluates or records changes.
+func (target *target) retire() {
+	target.mu.Lock()
+	defer target.mu.Unlock()
+
+	target.retired = true
 }
 
 func (target *target) record(tick int64, value observation) bool {

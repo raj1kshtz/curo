@@ -160,10 +160,10 @@ The public boundary owns:
 It must not expose internal state machines, mutable registries, or policy
 implementation types.
 
-The initial public surface is deliberately limited to `Transport`, `Mode`,
-`Option`, `New`, `WithMode`, mode access, and lifecycle close. Diagnosis,
-auditing, replay opt-in, and mitigation configuration remain internal until
-their behavior exists.
+The current public surface is deliberately limited to `Transport`, `Mode`,
+`Option`, `Stats`, `New`, `WithMode`, mode access, aggregate statistics, and
+lifecycle close. Diagnosis, detailed auditing, replay opt-in, and mitigation
+configuration remain internal until their behavior exists.
 
 ### 7.2 Transport Adapter
 
@@ -195,9 +195,10 @@ The guard owns:
 Recovery is not normal control flow. A recovered panic always creates an
 internal failure record and may contribute to self-disable.
 
-The initial implementation provides this boundary through an internal guard
-and optional request stages. No observation or mitigation stage is installed
-yet, so current public requests retain the direct delegation path.
+The implementation provides this boundary through an internal guard and an
+active bounded observation stage. Observation failures contribute to the
+self-disable signal. The base transport remains outside the guard, and no
+mitigation stage is installed.
 
 ### 7.4 Mode Gate
 
@@ -220,6 +221,12 @@ initial, retry, and breaker-probe attempts separately.
 
 It does not read or wrap a response body. Attempt latency ends when the base
 transport returns a response or error.
+
+The current implementation records completed initial attempts only. It uses a
+fixed target registry and fixed rolling buckets, classifies errors without
+retaining their text, and exposes aggregate counts through `Transport.Stats`.
+Retry, probe, readiness, and diagnosis evidence are added with their owning
+features.
 
 ### 7.6 Diagnoser
 
@@ -298,10 +305,9 @@ For each new request:
 Observe does not add a timeout, delay, retry, fail-fast response, or breaker
 probe.
 
-The current implementation has no observation pipeline yet, so all three modes
-use the same direct delegation path. The guard remains ready for internal
-stages without adding no-op work to the public request path. This is an
-implementation stage, not the final `Observe` or `Enforce` behavior.
+The current implementation performs steps 1 through 4 and step 7. Readiness,
+diagnosis, proposed actions, and audit records remain pending. The captured
+base response and error are unchanged.
 
 ### 8.3 Enforce
 
@@ -321,6 +327,9 @@ For each new request:
 
 The exact result-selection rule across multiple completed attempts is part of
 the public error and response contract.
+
+Until mitigation controls exist, `Enforce` follows the same bounded
+observation path as `Observe` and does not change request behavior.
 
 ## 9. Failure Containment
 
@@ -387,6 +396,9 @@ maintenance worker panics:
 - Stop that worker.
 - Do not enter an automatic restart loop.
 
+The registry remains memory-bounded after worker loss. Request access performs
+limited lazy expiry so worker loss cannot create unbounded growth.
+
 ### 9.6 Initial Self-Disable Threshold
 
 The initial guard uses a fixed three-entry rolling failure window. A guarded
@@ -397,15 +409,13 @@ pass-through.
 
 The window is updated only on failure and has fixed memory use. Successful
 operations do not erase recent failures; elapsed time removes them when the
-next failure is recorded. Once self-disabled, the guard skips all later
-internal request stages and does not add more failures.
+next failure is recorded. Once self-disabled, the guard skips request stages
+that have not started. Failures from stages already in flight can still
+increase the aggregate failure count.
 
 The threshold is an internal safety setting rather than a public option.
-Current construction installs no adaptive request stage, so ordinary direct
-delegation cannot trip the guard.
-
-The registry remains memory-bounded after worker loss. Request access performs
-limited lazy expiry so worker loss cannot create unbounded growth.
+The active observation stage runs only in `Observe` and `Enforce`. Its
+contained failures are visible through aggregate `Stats`.
 
 ## 10. State and Concurrency Ownership
 
@@ -421,10 +431,13 @@ One Curo instance owns:
 - Atomic mode and self-disable state.
 - A bounded sharded target registry.
 - Per-target observations and mitigation state.
-- One maintenance worker.
+- At most one maintenance worker.
 - Cancellation and close state.
 
 There is no package-global registry or policy state.
+
+The current observer starts no worker. It performs bounded lazy idle
+replacement during target admission.
 
 ### 10.2 Request Concurrency
 
@@ -454,19 +467,23 @@ The instance owns at most one maintenance worker. It performs:
 
 It does not perform network I/O or invoke a host-provided callback.
 
-`Close` cancels and joins the worker idempotently. It does not close the base
-transport. New requests after close must use a safe pass-through behavior; the
-exact public return contract remains a public API design decision.
+The initial observer does not start this worker. Its fixed registry remains
+bounded without background cleanup, and a full-shard miss may replace one
+expired target lazily.
+
+When a worker is introduced, `Close` cancels and joins it idempotently. It does
+not close the base transport. New requests after close use direct pass-through.
 
 ## 11. Target Identity and Registry Admission
 
 Raw URL paths and queries are not safe state keys because identifiers can
 create unbounded cardinality.
 
-The default target identity contains only bounded dimensions:
+The implemented target identity contains only bounded dimensions:
 
-- Lowercase URL scheme.
-- Canonical hostname.
+- HTTP or HTTPS scheme.
+- Canonical IP literal with any zone identifier preserved exactly, or a
+  lowercase DNS hostname with one trailing root dot removed.
 - Effective port.
 - A bounded HTTP method class.
 
@@ -483,6 +500,11 @@ An optional route classifier may add a low-cardinality route label. Its output
 must have a length limit and remains subject to registry capacity. A classifier
 panic is contained at the callback boundary.
 
+The initial method classes are read, write, connect, and other. An empty method
+uses the read class because `net/http` treats it as `GET`. Unknown schemes,
+invalid ports, empty hostnames, and hostnames longer than 253 bytes use the
+overflow aggregate.
+
 Registry admission follows these rules:
 
 1. Existing targets are reused.
@@ -491,25 +513,45 @@ Registry admission follows these rules:
 4. When full, new identities use a bounded overflow aggregate.
 5. High-cardinality input cannot churn established hot state continuously.
 
-Capacity and idle expiry are configuration bounds with conservative defaults.
-Exact values belong in the public configuration review.
+The initial registry admits at most 128 regular targets across eight lookup
+shards and owns one permanent overflow target. The global admission counter,
+not a per-shard quota, enforces capacity. The overflow target is
+non-actionable: its mixed evidence can never authorize diagnosis or mitigation.
+
+Hostnames are copied into detached bounded storage only when a target is
+admitted. Transient lookup values cannot retain a caller's complete URL.
+
+A target idle for 15 minutes may be replaced when a miss reaches a full
+registry and its shard contains an expired entry. Replacement always allocates
+fresh target state. An in-flight request may finish against its old reachable
+state but cannot write into the replacement. Public capacity and expiry
+options remain deferred.
 
 ## 12. Observation Model
 
-Each target owns fixed-size rolling time buckets. A bucket records:
+Each target owns 12 fixed 10-second buckets, giving a two-minute rolling
+window. A completed initial attempt increments exactly one outcome:
 
-- Initial request count.
-- Retry and probe attempt counts.
-- Success count.
-- Transport error count.
-- Timeout count by timeout source.
-- HTTP response class counts.
-- Caller cancellation count.
-- In-flight high-water mark.
-- A fixed latency histogram.
+- Success for a 2xx or 3xx response without a transport error.
+- HTTP failure for another response without a transport error.
+- Transport failure.
+- Caller cancellation.
+- Timeout, classified as caller-owned or transport-owned.
+
+HTTP response class is a parallel bounded dimension whenever a response
+exists. Therefore attempt count equals the sum of the five outcome counts.
+Retry, probe, and in-flight high-water evidence remain deferred.
 
 The latency histogram supports bounded approximate quantiles such as p95 and
-p99 without retaining individual samples.
+p99 without retaining individual samples. It has fixed bounds from one
+millisecond through 30 seconds plus an overflow bucket. Only attempts that
+return a response without a transport error contribute to latency evidence, so
+caller cancellation and transport failure do not distort a future timeout
+baseline.
+
+Completion time selects the rolling bucket. Each bucket stores its generation.
+A completion older than a newer generation already occupying the same slot is
+dropped rather than erasing current evidence.
 
 Initial demand, retry traffic, and probe traffic remain separate. Retry
 attempts never replenish a retry budget or inflate original demand.
@@ -519,7 +561,14 @@ failure unless transport evidence independently identifies a dependency
 failure.
 
 The observer classifies errors into stable categories. It does not persist raw
-error text.
+error text. Error-chain inspection is cycle-aware, recognizes bounded
+per-node cancellation and timeout semantics, and stops after 32 nodes.
+Malformed or over-budget chains fall back to transport-failure evidence rather
+than delaying the captured result indefinitely.
+
+The two-minute window intentionally cannot make low-volume targets ready by
+itself. Readiness and longer-lived baseline design remain part of the diagnosis
+milestone.
 
 ## 13. Readiness and Diagnosis
 
@@ -720,8 +769,27 @@ host-provided sink:
 The public API review chooses a pull or callback delivery contract. The core
 must not create a goroutine per event.
 
-Internal failure logging is best effort and rate-limited. A logging failure
-cannot replace the request result.
+Future internal failure logging must be best effort and rate-limited. A logging
+failure cannot replace the request result.
+
+Error `Unwrap`, `Is`, and `Timeout` methods are also host-provided callbacks.
+They run outside internal locks and inside postflight containment. As with any
+arbitrary callback, Curo cannot preempt an implementation that blocks forever.
+
+### 16.5 Aggregate Statistics
+
+`Transport.Stats` exposes only:
+
+- Completed observed request count.
+- Current regular target count.
+- Overflow observation count.
+- Contained internal failure count.
+- Sticky self-disable state.
+
+The snapshot contains no target identifiers or per-target evidence. Its fields
+are sampled independently under concurrency. Overflow never exceeds observed
+requests, and self-disabled state implies at least three contained failures.
+Detailed audit records, callbacks, and logging sinks remain deferred.
 
 ## 17. Lifecycle
 
@@ -766,8 +834,8 @@ Self-disable does not reset automatically. Explicit reset:
 - Does not make stale adaptive evidence ready.
 
 The current public API does not expose reset. Reconstructing the `Transport`
-creates a fresh guard until reset semantics and reporting are implemented
-together.
+creates a fresh guard until reset semantics and detailed failure reporting are
+implemented together.
 
 ### 17.4 Close
 
@@ -781,7 +849,8 @@ Close is idempotent:
 
 In-flight requests use their captured snapshots and results. After close, new
 requests use direct pass-through, mode changes return `ErrClosed`, and the
-configured mode remains readable.
+configured mode and aggregate statistics remain readable. Close retains the
+bounded observer state so an in-flight postflight can finish safely.
 
 ## 18. Failure Model
 
@@ -811,14 +880,22 @@ The first implementation must meet these structural targets:
 | Instance workers | At most one core maintenance worker |
 | Registry memory | Linear only in configured fixed capacity |
 | Per-target memory | Fixed after target admission |
-| Observation update | No heap allocation after warm admission |
+| Canonical target hit and observation update | No heap allocation after warm admission |
 | I/O boundary | No Curo lock held |
 | Retry attempts | Hard bounded per request and by budgets |
 | Metric labels | Closed or capacity-bounded |
 
 Latency and allocation benchmarks compare Curo modes with the same base
-transport. Numerical regression gates are set only after the first
-implementation establishes a reproducible baseline.
+transport. The initial harness establishes a local baseline; numerical
+regression gates wait for a repeatable CI benchmark environment.
+
+The initial observer stores 2,808 bytes of rolling evidence per target on
+64-bit platforms. The 128 regular targets plus overflow aggregate therefore
+use about 354 KiB for evidence, excluding bounded map and key overhead.
+Benchmarks cover Off and warm Observe paths with an already canonical target;
+both perform zero Curo heap allocations per request with the benchmark base
+transport. Inputs that require case or IP normalization may use bounded
+transient allocation.
 
 ## 20. Security Considerations
 
@@ -934,6 +1011,8 @@ The initial contract is:
 - `Transport` implements `http.RoundTripper` and `io.Closer`.
 - `WithMode` selects the initial mode; `Observe` is the default.
 - `Mode` and `SetMode` are safe for concurrent use.
+- `Stats` returns privacy-safe aggregate counters and self-disable state. It is
+  safe for concurrent use and remains readable after close.
 - On an open transport, invalid modes return `ErrInvalidMode` without changing
   the active mode.
 - A nil base is rejected. Uninitialized operations that require the base return
@@ -948,17 +1027,23 @@ The initial contract is:
   once. A postflight stage failure returns the already captured response and
   error without another attempt.
 - Three internal stage failures within one minute permanently bypass later
-  stages for that instance. No adaptive stages are installed yet.
+  stages for that instance. Aggregate failure count and self-disable state are
+  visible through `Stats`.
+- `Observe` and `Enforce` record bounded completed-attempt evidence. `Off`,
+  closed, and self-disabled paths do not collect new evidence.
+- Target state is bounded to 128 regular identities and one non-actionable
+  overflow aggregate. Paths, queries, headers, bodies, URL user information,
+  and raw error text are not retained.
 - The current `RoundTrip` path passes the original request to the base exactly
   once and preserves its response, error, and panic behavior.
 
 The following surfaces remain deferred until their implementations exist:
 
 - Public diagnosis and readiness types.
-- Target classification.
+- Public route classification and per-target evidence access.
 - Replay opt-in for unsafe methods.
 - Audit delivery through pull, callback, or both.
-- User-visible internal-failure reporting.
+- Detailed internal-failure events and logging sinks.
 - Fail-fast and internal-failure error types.
 - Result selection after multiple completed attempts.
 - Self-disable reset.

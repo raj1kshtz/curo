@@ -13,7 +13,8 @@ application to tune static thresholds.
 > [!IMPORTANT]
 > Curo is pre-alpha and has no release. The current API provides transparent
 > transport behavior, bounded request observation, and aggregate runtime
-> statistics. Adaptive diagnosis and mitigation are not implemented yet.
+> statistics. Readiness and deterministic diagnosis run internally; public
+> diagnosis delivery, policy evaluation, and mitigation are not implemented.
 
 ## Current status
 
@@ -22,8 +23,8 @@ application to tune static thresholds.
 | Architecture decisions | Accepted and documented in [`docs/adr`](docs/adr/) |
 | Engine design | Documented in [`docs/design/engine.md`](docs/design/engine.md) |
 | Public Go API | Transport, lifecycle, operating modes, and aggregate statistics |
-| Runtime implementation | Guarded bounded observation around direct delegation |
-| Adaptive behavior | Observation implemented; diagnosis and mitigation pending |
+| Runtime implementation | Guarded observation and diagnosis around direct delegation |
+| Adaptive behavior | Readiness and diagnosis implemented internally; policy and mitigation pending |
 | Performance data | Allocation benchmarks added; regression gates pending |
 
 Public documentation is updated as features become real, rather than
@@ -52,15 +53,21 @@ concurrency, and `Close` is idempotent. The application closes the returned
 `curo.Transport` during shutdown.
 
 Every mode delegates the original request exactly once and returns the base
-response or error unchanged. `Observe` and `Enforce` record completed attempts;
-`Off`, closed, and self-disabled transports use direct pass-through without
-collecting new evidence.
+response or error unchanged. `Observe` and `Enforce` record completed attempts
+and evaluate bounded internal diagnoses; `Off`, closed, and self-disabled
+transports use direct pass-through without collecting new evidence.
 
 Observation keys include only a normalized HTTP or HTTPS scheme, bounded
 hostname, effective port, and closed method class. Paths, queries, URL user
 information, headers, bodies, and raw error text are excluded. One transport
 admits at most 128 regular targets and uses one non-actionable overflow
 aggregate for additional or invalid identities.
+
+Each regular target combines a two-minute recent window with a bounded
+non-overlapping historical baseline. Deterministic rules produce cold,
+warming, ready, or stale readiness and a closed diagnosis class. Caller-owned
+cancellation does not warm readiness, the overflow aggregate is never
+diagnosed, and diagnosis results expire after ten seconds.
 
 `Stats` provides privacy-safe aggregate visibility:
 
@@ -75,6 +82,10 @@ fmt.Printf(
     stats.SelfDisabled,
 )
 ```
+
+`Stats` intentionally does not expose target identities or diagnoses. Public
+diagnosis and audit delivery will be designed with the proposed-action
+milestone rather than added as an incomplete compatibility surface.
 
 The transport now separates optional Curo-owned preflight and postflight work
 from the unguarded base transport call. A preflight failure falls back to the
@@ -115,10 +126,10 @@ constraint is therefore host application inviolability:
 - The wrapped transport remains host-owned and keeps its existing panic
   semantics.
 
-The guarded request-stage boundary, bounded observer, aggregate internal-fault
-visibility, and self-disable signal are implemented. Diagnosis, policy,
-mitigation, and detailed audit delivery remain design requirements. The full
-contract is recorded in
+The guarded request-stage boundary, bounded observer and historical baseline,
+deterministic diagnoser, aggregate internal-fault visibility, and self-disable
+signal are implemented. Policy, mitigation, and detailed audit delivery remain
+design requirements. The full contract is recorded in
 [ADR-0002](docs/adr/0002-host-application-inviolability.md).
 
 ## Architecture
@@ -140,10 +151,9 @@ project governance material.
 
 The next milestones are:
 
-1. Add readiness and deterministic diagnosis over bounded evidence.
-2. Add proposed-action evaluation and detailed audit delivery.
-3. Introduce mitigation controls with safety tests and benchmarks.
-4. Publish operational guidance after behavior is measured.
+1. Add proposed-action evaluation and detailed audit delivery.
+2. Introduce mitigation controls with safety tests and benchmarks.
+3. Publish operational guidance after behavior is measured.
 
 ## Contributing
 

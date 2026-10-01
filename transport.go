@@ -17,7 +17,8 @@ import (
 // The current implementation delegates every request to the base transport
 // exactly once without mutation. Observe and Enforce collect bounded result
 // evidence behind narrow failure boundaries without wrapping the host-owned
-// transport call. Adaptive diagnosis and mitigation are not implemented yet.
+// transport call and evaluate deterministic internal diagnoses. Policy,
+// public diagnosis delivery, and mitigation are not implemented yet.
 //
 // A Transport must not be copied after first use.
 type Transport struct {

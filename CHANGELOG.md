@@ -20,5 +20,8 @@ changes will always be listed here under **Changed** or **Removed**.
   budgets, and package boundaries.
 - Engine high-level design with reviewed context, component, runtime,
   containment, state-ownership, and mitigation-control diagrams.
+- Initial public transport API with explicit base ownership, validated
+  operating modes, concurrency-safe mode changes, idempotent lifecycle, and
+  transparent request delegation.
 
 [Unreleased]: https://github.com/raj1kshtz/curo/commits/main

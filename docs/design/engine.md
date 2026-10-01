@@ -77,7 +77,8 @@ The first engine does not provide:
 - Machine-learning policy.
 - Persistent adaptive state across process restarts.
 - Arbitrary workflow execution.
-- Exact public Go signatures, which are defined during public API design.
+- Public diagnosis, audit, replay, and mitigation-control types beyond the
+  initial transport API.
 
 ## 5. Architectural Invariants
 
@@ -158,6 +159,11 @@ The public boundary owns:
 
 It must not expose internal state machines, mutable registries, or policy
 implementation types.
+
+The initial public surface is deliberately limited to `Transport`, `Mode`,
+`Option`, `New`, `WithMode`, mode access, and lifecycle close. Diagnosis,
+auditing, replay opt-in, and mitigation configuration remain internal until
+their behavior exists.
 
 ### 7.2 Transport Adapter
 
@@ -283,6 +289,10 @@ For each new request:
 
 Observe does not add a timeout, delay, retry, fail-fast response, or breaker
 probe.
+
+The initial API implementation has no observation pipeline yet, so all three
+modes currently use the same direct delegation path. This is an implementation
+stage, not the final `Observe` or `Enforce` behavior.
 
 ### 8.3 Enforce
 
@@ -701,9 +711,16 @@ Construction:
 6. Starts at most one maintenance worker.
 7. Defaults mode to `Observe`.
 
-Invalid configuration must still leave the application with a safe way to use
-its original transport. The exact constructor return contract is decided
-during public API design.
+The public constructor is:
+
+```go
+func New(base http.RoundTripper, options ...Option) (*Transport, error)
+```
+
+`Transport` binds one host-owned base transport. A nil base returns
+`ErrNilBaseTransport`. Invalid options return an error and no partially
+constructed instance. The caller retains the original base transport and can
+continue using it after any construction error.
 
 ### 17.2 Mode Change
 
@@ -732,7 +749,9 @@ Close is idempotent:
 - Do not close the base transport.
 - Do not wait for arbitrary host callback work.
 
-In-flight requests use their captured snapshots and results.
+In-flight requests use their captured snapshots and results. After close, new
+requests use direct pass-through, mode changes return `ErrClosed`, and the
+configured mode remains readable.
 
 ## 18. Failure Model
 
@@ -876,22 +895,35 @@ The recommended adoption sequence is:
 Each process starts with cold local evidence after restart. There is no hidden
 state dependency on another process.
 
-## 23. Open Public API Decisions
+## 23. Public API Contract
 
-The HLD intentionally leaves these public-contract questions for the
-compilable API review:
+The initial contract is:
 
-- Constructor name and safe invalid-configuration result.
-- Wrapper ownership and nil base transport behavior.
-- Mode getter and setter signatures.
-- Public diagnosis and readiness spelling.
-- Target classifier contract.
-- Replay opt-in contract for unsafe methods.
+- `New(base, options...)` returns a `*Transport` or an error.
+- One `Transport` binds one host-owned `http.RoundTripper`.
+- `Transport` implements `http.RoundTripper` and `io.Closer`.
+- `WithMode` selects the initial mode; `Observe` is the default.
+- `Mode` and `SetMode` are safe for concurrent use.
+- On an open transport, invalid modes return `ErrInvalidMode` without changing
+  the active mode.
+- A nil base is rejected. Uninitialized operations that require the base return
+  `ErrNilBaseTransport`, while `Mode` reports `Off`.
+- `Close` is idempotent and never closes the base transport.
+- After close, `RoundTrip` delegates directly and `SetMode` returns
+  `ErrClosed`.
+- The current `RoundTrip` path passes the original request to the base exactly
+  once and preserves its response, error, and panic behavior.
+
+The following surfaces remain deferred until their implementations exist:
+
+- Public diagnosis and readiness types.
+- Target classification.
+- Replay opt-in for unsafe methods.
 - Audit delivery through pull, callback, or both.
-- Public fail-fast and internal-failure error types.
+- Fail-fast and internal-failure error types.
 - Result selection after multiple completed attempts.
-- Close and reset behavior visible to callers.
-- Exact defaults for capacity, expiry, windows, budgets, and timeouts.
+- Self-disable reset.
+- Capacity, expiry, window, budget, and timeout options.
 
-These contracts must be reviewed as one coherent public API before runtime
-implementation begins.
+Each deferred surface requires API review alongside the code that gives it
+meaning.

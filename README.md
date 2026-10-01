@@ -11,8 +11,9 @@ application to tune static thresholds.
 [![License][license-badge]](LICENSE)
 
 > [!IMPORTANT]
-> Curo is in the design phase. There is no supported public API or release yet,
-> and the repository should not be used as a production dependency.
+> Curo is pre-alpha and has no release. The current API provides transparent
+> transport behavior only; adaptive observation and mitigation are not
+> implemented yet.
 
 ## Current status
 
@@ -20,13 +21,39 @@ application to tune static thresholds.
 | ---- | ------ |
 | Architecture decisions | Accepted and documented in [`docs/adr`](docs/adr/) |
 | Engine design | Documented in [`docs/design/engine.md`](docs/design/engine.md) |
-| Public Go API | Not yet defined |
-| Runtime implementation | Not yet implemented |
-| Examples and performance data | Added only after working code exists |
+| Public Go API | Initial transport and lifecycle contract |
+| Runtime implementation | Transparent delegation to a host-owned transport |
+| Adaptive behavior | Not yet implemented |
+| Performance data | Added after adaptive runtime code exists |
 
-The repository currently contains the package scaffold and design constraints
-that will guide implementation. Public documentation is updated as features
-become real, rather than documenting planned APIs as if they already exist.
+Public documentation is updated as features become real, rather than
+documenting planned APIs as if they already exist.
+
+## Current API
+
+```go
+func newHTTPClient() (*http.Client, *curo.Transport, error) {
+    transport, err := curo.New(
+        http.DefaultTransport,
+        curo.WithMode(curo.Observe),
+    )
+    if err != nil {
+        return nil, nil, err
+    }
+
+    client := &http.Client{Transport: transport}
+    return client, transport, nil
+}
+```
+
+One `curo.Transport` binds one host-owned `http.RoundTripper`. Curo does not
+close the base transport. A nil base is rejected, mode access is safe under
+concurrency, and `Close` is idempotent. The application closes the returned
+`curo.Transport` during shutdown.
+
+At this stage, every mode delegates the original request exactly once and
+returns the base response or error unchanged. Closing Curo keeps that direct
+pass-through path available.
 
 ## Intended scope
 
@@ -80,11 +107,10 @@ and long-term constraints remain reviewable. See the
 
 The next milestones are:
 
-1. Define a small compilable public API.
-2. Implement guarded pass-through behavior.
-3. Add bounded observation and diagnosis.
-4. Introduce mitigation controls with tests and benchmarks.
-5. Publish examples only after they compile against the real API.
+1. Implement guarded failure containment around Curo-owned work.
+2. Add bounded observation and diagnosis.
+3. Introduce mitigation controls with tests and benchmarks.
+4. Publish operational guidance after behavior is measured.
 
 ## Contributing
 

@@ -1,5 +1,7 @@
-// Package curo is the planned public package for an adaptive HTTP resilience
-// library.
+// Package curo provides an explicit HTTP transport wrapper for adaptive
+// resilience.
 //
-// Curo is currently in the design phase and has no supported runtime API.
+// The current implementation provides transparent delegation, operating-mode
+// control, and lifecycle semantics. Adaptive observation and mitigation are
+// not implemented yet.
 package curo

@@ -9,7 +9,8 @@ package curo
 // ObservedRequests, and SelfDisabled implies at least three InternalFailures.
 type Stats struct {
 	// ObservedRequests is the number of completed initial attempts recorded in
-	// Observe or Enforce mode. Retry attempts are not included.
+	// Observe or Enforce mode. Retry attempts and requests that failed fast
+	// with ErrBreakerOpen are not included.
 	ObservedRequests uint64
 
 	// TrackedTargets is the current number of admitted regular targets. It does
@@ -36,6 +37,19 @@ type Stats struct {
 	// or instance retry budget was empty. Observe funds retry budgets but never
 	// reserves from them, so it records no denials.
 	RetryBudgetDenials uint64
+
+	// BreakerOpens is the number of times Enforce opened a closed dependency
+	// breaker. A failed probe keeps a breaker open without counting another
+	// open.
+	BreakerOpens uint64
+
+	// BreakerProbes is the number of requests that open dependency breakers
+	// sent to the base transport as probes after a cooldown.
+	BreakerProbes uint64
+
+	// BreakerRejections is the number of requests that failed fast with
+	// ErrBreakerOpen without calling the base transport.
+	BreakerRejections uint64
 
 	// InternalFailures is the number of contained Curo-owned failures in
 	// request stages and Report.
@@ -69,6 +83,9 @@ func (t *Transport) Stats() Stats {
 		RetryAttempts:      retryAttempts,
 		RetrySuccesses:     retrySuccesses,
 		RetryBudgetDenials: retryBudgetDenials,
+		BreakerOpens:       t.breakers.opens.Load(),
+		BreakerProbes:      t.breakers.probes.Load(),
+		BreakerRejections:  t.breakers.rejections.Load(),
 		InternalFailures:   internalFailures,
 		SelfDisabled:       selfDisabled,
 	}

@@ -60,8 +60,8 @@ func TestReportPublishesNormalizedWarmingTarget(t *testing.T) {
 	if !slices.Equal(decision.Reasons, wantReasons) {
 		t.Errorf("Reasons = %v, want %v", decision.Reasons, wantReasons)
 	}
-	if decision.PolicyVersion != 1 {
-		t.Errorf("PolicyVersion = %d, want 1", decision.PolicyVersion)
+	if decision.PolicyVersion != 2 {
+		t.Errorf("PolicyVersion = %d, want 2", decision.PolicyVersion)
 	}
 	if decision.Recent != (curo.Evidence{Attempts: 1}) {
 		t.Errorf("Recent = %+v, want one attempt", decision.Recent)

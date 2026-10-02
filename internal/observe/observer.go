@@ -7,13 +7,17 @@ import (
 	"time"
 
 	"github.com/raj1kshtz/curo/internal/diagnose"
-	"github.com/raj1kshtz/curo/internal/policy"
 	"github.com/raj1kshtz/curo/internal/retry"
 )
 
 // Request is the bounded request metadata accepted by Observer.
 type Request struct {
-	Context  context.Context
+	Context context.Context
+
+	// Cancel is the request's deprecated Cancel channel, or nil. Closing it
+	// cancels the request just like canceling Context.
+	Cancel <-chan struct{}
+
 	Method   string
 	Scheme   string
 	Hostname string
@@ -31,8 +35,11 @@ type Result struct {
 type Token struct {
 	target   *target
 	context  context.Context
+	cancel   <-chan struct{}
 	started  time.Time
+	probe    uint64
 	overflow bool
+	admitted bool
 }
 
 // Completion summarizes how Finish handled one initial attempt.
@@ -47,6 +54,13 @@ type Completion struct {
 	// DependencyFailure reports whether the attempt failed for a reason
 	// attributed to the dependency rather than to the caller.
 	DependencyFailure bool
+
+	// Trip reports that a closed dependency breaker admitted the attempt, the
+	// attempt failed for a reason attributed to the dependency, the breaker is
+	// still closed, and the target's current plan selects
+	// CandidateBreakerOpen. The caller decides whether the request may still
+	// act, and if so calls Trip.
+	Trip bool
 }
 
 // RetryReservation describes the outcome of ReserveRetry.
@@ -128,6 +142,7 @@ func (observer *Observer) Begin(request Request) Token {
 		return Token{
 			target:   observer.registry.overflow,
 			context:  request.Context,
+			cancel:   request.Cancel,
 			started:  started,
 			overflow: true,
 		}
@@ -137,6 +152,7 @@ func (observer *Observer) Begin(request Request) Token {
 	return Token{
 		target:   state,
 		context:  request.Context,
+		cancel:   request.Cancel,
 		started:  started,
 		overflow: overflow,
 	}
@@ -145,7 +161,8 @@ func (observer *Observer) Begin(request Request) Token {
 // Finish records one completed initial transport attempt.
 //
 // Each recorded attempt on a regular target funds that target's retry budget
-// and the instance retry budget. Overflow attempts never fund retries.
+// and the instance retry budget. Overflow attempts never fund retries. Finish
+// also settles a breaker probe that Admit started.
 func (observer *Observer) Finish(token Token, result Result) Completion {
 	if observer == nil || token.target == nil {
 		return Completion{}
@@ -155,17 +172,19 @@ func (observer *Observer) Finish(token Token, result Result) Completion {
 	tick := observer.tick(finished)
 	latency := max(finished.Sub(token.started), 0)
 
-	var contextErr error
-	if token.context != nil {
-		contextErr = token.context.Err()
-	}
-
-	value := classify(result, contextErr, latency)
+	value := classify(result, token.callerErr(), latency)
+	recorded, trip := token.target.complete(
+		tick,
+		value,
+		token.probe,
+		token.admitted,
+	)
 	completion := Completion{
 		Latency:           latency,
 		DependencyFailure: value.signal == diagnosisDependencyFailure,
+		Trip:              trip,
 	}
-	if !token.target.record(tick, value) {
+	if !recorded {
 		return completion
 	}
 
@@ -196,22 +215,23 @@ func (observer *Observer) ReserveRetry(token Token) (retry.Lease, RetryReservati
 	return lease, RetryReserved
 }
 
-// RetryPermitted reports whether token's target is live and its published
-// plan is an unexpired current-version plan containing the Retry candidate.
+// RetryPermitted reports whether token may start a retry. The token must not
+// be a breaker probe, its target must be live with a closed dependency
+// breaker, and the target's published plan must be an unexpired
+// current-version plan containing the Retry candidate.
 //
 // Overflow tokens, retired targets, and expired or older plans are never
 // permitted. RetryPermitted never evaluates a diagnosis.
 func (observer *Observer) RetryPermitted(token Token) bool {
-	if observer == nil || token.target == nil || token.overflow {
+	if observer == nil ||
+		token.target == nil ||
+		token.overflow ||
+		token.probe != 0 ||
+		token.target.engaged.Load() {
 		return false
 	}
 
-	current, live := token.target.published()
-	plan := current.plan
-	return live &&
-		plan.Version == policy.Version &&
-		plan.Candidates&policy.CandidateRetry != 0 &&
-		observer.tick(observer.now()) < plan.ExpiresAt
+	return token.target.retryPermitted(observer.tick(observer.now()))
 }
 
 // Diagnosis returns the current bounded diagnosis for token's target.

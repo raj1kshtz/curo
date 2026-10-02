@@ -9,6 +9,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/raj1kshtz/curo/internal/breaker"
 	"github.com/raj1kshtz/curo/internal/guard"
 	"github.com/raj1kshtz/curo/internal/observe"
 	"github.com/raj1kshtz/curo/internal/retry"
@@ -21,9 +22,11 @@ import (
 // mutation. Observe and Enforce collect bounded result evidence behind narrow
 // failure boundaries without wrapping the host-owned transport call, evaluate
 // deterministic diagnoses and control candidates, and publish them through
-// Report. Enforce applies only the Retry candidate: when every retry condition
-// holds, it starts one budgeted retry of a replay-safe request with a clone of
-// the original request. Other candidates are not applied.
+// Report. Enforce also applies two candidates. For Retry, when every retry
+// condition holds, it starts one budgeted retry of a replay-safe request with
+// a clone of the original request. For BreakerOpen, it opens the target's
+// dependency breaker, so later requests to that target fail fast with
+// ErrBreakerOpen until a probe request gets an answer from the dependency.
 //
 // A Transport must not be copied after first use.
 type Transport struct {
@@ -35,6 +38,7 @@ type Transport struct {
 	wait     func(context.Context, <-chan struct{}, time.Duration) bool
 
 	retries   retryCounters
+	breakers  breakerCounters
 	authority atomic.Uint64
 	closed    atomic.Bool
 }
@@ -49,7 +53,7 @@ const (
 )
 
 type requestStages interface {
-	preflight(requestSnapshot, Mode) (requestState, error)
+	preflight(requestSnapshot, uint64) (requestState, error)
 	postflight(requestState, attemptResult) (retryGrant, error)
 	confirmRetry(requestState) bool
 }
@@ -58,7 +62,8 @@ type requestState struct {
 	requestContext context.Context
 	cancel         <-chan struct{}
 	observation    observe.Token
-	mode           Mode
+	authority      uint64
+	admission      breaker.Admission
 	replaySafe     bool
 }
 
@@ -93,46 +98,69 @@ type retryCounters struct {
 	budgetDenials atomic.Uint64
 }
 
+type breakerCounters struct {
+	opens      atomic.Uint64
+	probes     atomic.Uint64
+	rejections atomic.Uint64
+}
+
 type adaptiveStages struct {
-	observer *observe.Observer
-	retries  *retryCounters
-	jitter   func() time.Duration
+	observer   *observe.Observer
+	retries    *retryCounters
+	breakers   *breakerCounters
+	authorized func(uint64) bool
+	jitter     func() time.Duration
 }
 
 func newAdaptiveStages(
 	observer *observe.Observer,
 	retries *retryCounters,
+	breakers *breakerCounters,
+	authorized func(uint64) bool,
 ) adaptiveStages {
 	return adaptiveStages{
-		observer: observer,
-		retries:  retries,
-		jitter:   retry.Jitter,
+		observer:   observer,
+		retries:    retries,
+		breakers:   breakers,
+		authorized: authorized,
+		jitter:     retry.Jitter,
 	}
 }
 
+// preflight resolves the request's target. In Enforce mode it also asks the
+// target's dependency breaker to admit the request.
 func (stages adaptiveStages) preflight(
 	snapshot requestSnapshot,
-	mode Mode,
+	authority uint64,
 ) (requestState, error) {
 	token := stages.observer.Begin(observe.Request{
 		Context:  snapshot.requestContext,
+		Cancel:   snapshot.cancel,
 		Method:   snapshot.method,
 		Scheme:   snapshot.scheme,
 		Hostname: snapshot.hostname,
 		Port:     snapshot.port,
 	})
+	admission := breaker.Pass
+	if authorityMode(authority) == Enforce {
+		token, admission = stages.observer.Admit(token)
+	}
 
 	return requestState{
 		requestContext: snapshot.requestContext,
 		cancel:         snapshot.cancel,
 		observation:    token,
-		mode:           mode,
+		authority:      authority,
+		admission:      admission,
 		replaySafe:     snapshot.replaySafe,
 	}, nil
 }
 
-// postflight records the initial attempt. In Enforce mode, when every retry
-// condition holds, its last step reserves retry budget for one retry.
+// postflight records the initial attempt and settles a breaker probe. In
+// Enforce mode, a dependency failure opens the target's dependency breaker
+// when the target's plan selects BreakerOpen and the request's authority is
+// still current. When every retry condition holds, its last step reserves
+// retry budget for one retry.
 func (stages adaptiveStages) postflight(
 	state requestState,
 	result attemptResult,
@@ -142,7 +170,12 @@ func (stages adaptiveStages) postflight(
 		StatusCode:  result.statusCode,
 		HasResponse: result.hasResponse,
 	})
-	if state.mode != Enforce ||
+	if completion.Trip &&
+		stages.authorized(state.authority) &&
+		stages.observer.Trip(state.observation) {
+		stages.breakers.opens.Add(1)
+	}
+	if authorityMode(state.authority) != Enforce ||
 		!state.replaySafe ||
 		!completion.Recorded ||
 		!retry.Retryable(
@@ -200,22 +233,34 @@ func New(base http.RoundTripper, options ...Option) (*Transport, error) {
 		reports:  observer.Report,
 		wait:     retry.Wait,
 	}
-	transport.stages = newAdaptiveStages(observer, &transport.retries)
+	transport.stages = newAdaptiveStages(
+		observer,
+		&transport.retries,
+		&transport.breakers,
+		transport.authorized,
+	)
 	transport.authority.Store(uint64(cfg.mode))
 
 	return transport, nil
 }
 
-// RoundTrip delegates req to the base transport.
+// RoundTrip delegates req to the base transport, unless a dependency breaker
+// rejects it.
 //
-// Off, Observe, and requests that do not qualify for a retry reach the base
-// transport exactly once, unmodified. In Enforce mode, a replay-safe request
-// whose initial attempt failed in a retryable way may reach the base transport
-// a second time, as a clone with a body from GetBody, after a short
-// cancellable backoff. The retry's result is returned and the discarded first
-// response body is closed without being drained. If the retry does not start,
-// the first result is returned untouched. A done request context, or a closed
-// deprecated Cancel channel, stops a retry that has not started.
+// Off, Observe, and Enforce requests that are neither rejected by a breaker
+// nor retried reach the base transport exactly once, unmodified. In Enforce
+// mode, a replay-safe request whose initial attempt failed in a retryable way
+// may reach the base transport a second time, as a clone with a body from
+// GetBody, after a short cancellable backoff. The retry's result is returned
+// and the discarded first response body is closed without being drained. If
+// the retry does not start, the first result is returned untouched. A done
+// request context, or a closed deprecated Cancel channel, stops a retry that
+// has not started.
+//
+// In Enforce mode, while the dependency breaker of req's target is open,
+// RoundTrip closes req.Body, if any, and returns ErrBreakerOpen without calling
+// the base transport. After a cooldown, one request at a time is sent as a
+// probe instead, and a probe is never retried.
 //
 // Curo-owned stages run only before an attempt starts or after its result has
 // been captured. Base transport calls remain outside Curo's recovery boundary,
@@ -234,13 +279,21 @@ func (t *Transport) RoundTrip(req *http.Request) (*http.Response, error) {
 	)
 	if stages != nil && !t.closed.Load() {
 		authority = t.authority.Load()
-		mode := authorityMode(authority)
-		if mode != Off && !t.guard.Disabled() {
+		if authorityMode(authority) != Off && !t.guard.Disabled() {
 			runPostflight = t.guard.Run(func() error {
 				var err error
-				state, err = stages.preflight(snapshotRequest(req), mode)
+				state, err = stages.preflight(snapshotRequest(req), authority)
 				return err
 			}) == guard.Completed
+		}
+	}
+
+	if runPostflight {
+		switch state.admission {
+		case breaker.Reject:
+			return nil, t.reject(req)
+		case breaker.Probe:
+			t.breakers.probes.Add(1)
 		}
 	}
 
@@ -293,14 +346,14 @@ func (t *Transport) retry(
 		!t.commitRetry(req, stages, state, authority, grant.firstAttempt) {
 		grant.lease.Cancel()
 		if body != nil {
-			t.closeDiscarded(body)
+			t.closeBody(body)
 		}
 		return response, err
 	}
 
 	grant.lease.Commit()
 	if response != nil && response.Body != nil {
-		t.closeDiscarded(response.Body)
+		t.closeBody(response.Body)
 	}
 	t.retries.attempts.Add(1)
 
@@ -330,7 +383,7 @@ func (t *Transport) prepareRetry(
 	)
 	_ = t.guard.Run(func() error {
 		ctx := req.Context()
-		if !t.retryAuthorized(authority) || !t.wait(ctx, cancel, delay) {
+		if !t.authorized(authority) || !t.wait(ctx, cancel, delay) {
 			return nil
 		}
 
@@ -374,7 +427,7 @@ func (t *Transport) commitRetry(
 ) bool {
 	permitted := false
 	_ = t.guard.Run(func() error {
-		permitted = t.retryAuthorized(authority) &&
+		permitted = t.authorized(authority) &&
 			!retry.Canceled(state.cancel) &&
 			retry.DeadlineAllows(req.Context(), 0, firstAttempt) &&
 			stages.confirmRetry(state)
@@ -384,16 +437,31 @@ func (t *Transport) commitRetry(
 	return permitted
 }
 
-// retryAuthorized reports whether the authority a request started with is
-// still current. Any mode change or Close after the request started revokes
-// it. Self-disable revokes it through the guard, which skips later stages.
-func (t *Transport) retryAuthorized(authority uint64) bool {
+// authorized reports whether the authority a request started with is still
+// current. Any mode change or Close after the request started revokes it.
+// Self-disable revokes it through the guard, which skips later stages. Opening
+// a dependency breaker and starting a retry both take effect only after this
+// check passes.
+func (t *Transport) authorized(authority uint64) bool {
 	return t.authority.Load() == authority && !t.closed.Load()
 }
 
-// closeDiscarded closes a body that Curo replaced or discarded. The close
-// error is ignored because the body is no longer part of any result.
-func (t *Transport) closeDiscarded(body io.Closer) {
+// reject fails a request fast because its target's dependency breaker is open.
+// The base transport is not called, so RoundTrip closes req.Body as a base
+// transport would.
+func (t *Transport) reject(req *http.Request) error {
+	t.breakers.rejections.Add(1)
+	if req != nil && req.Body != nil {
+		t.closeBody(req.Body)
+	}
+
+	return ErrBreakerOpen
+}
+
+// closeBody closes a request body that Curo did not send or a response body
+// that Curo discarded. The close error is ignored because the body is no
+// longer part of any result.
+func (t *Transport) closeBody(body io.Closer) {
 	_ = t.guard.Contain(func() error {
 		_ = body.Close()
 		return nil

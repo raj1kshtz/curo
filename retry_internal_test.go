@@ -54,11 +54,14 @@ func newRetryHarness(t *testing.T) *retryHarness {
 		internalRoundTripperFunc(harness.roundTrip),
 		harness.clock.Now,
 	)
-	harness.transport.stages = adaptiveStages{
-		observer: harness.transport.observer,
-		retries:  &harness.transport.retries,
-		jitter:   func() time.Duration { return retryTestDelay },
-	}
+	stages := newAdaptiveStages(
+		harness.transport.observer,
+		&harness.transport.retries,
+		&harness.transport.breakers,
+		harness.transport.authorized,
+	)
+	stages.jitter = func() time.Duration { return retryTestDelay }
+	harness.transport.stages = stages
 	harness.transport.wait = harness.wait
 
 	return harness

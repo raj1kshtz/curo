@@ -167,19 +167,23 @@ func TestDiagnosisRecordsOnlyCandidateChanges(t *testing.T) {
 	if saturated.Class != diagnose.ClassSaturation {
 		t.Fatalf("class after rate limiting = %v, want Saturation", saturated.Class)
 	}
-	assertChange(t, changes.snapshot(), 2, policy.CandidateBreakerOpen, diagnose.ClassSaturation)
+	assertChange(t, changes.snapshot(), 2, 0, diagnose.ClassSaturation)
 
 	recordObservation(t, state, 10*time.Minute, observation{
 		outcome: outcomeSuccess,
 		signal:  diagnosisNeutral,
 	})
-	assertChange(t, changes.snapshot(), 3, 0, diagnose.ClassNone)
+	if got := changes.snapshot(); len(got) != 2 {
+		t.Fatalf("changes after clearing an empty plan = %d, want 2", len(got))
+	}
 
 	retained := changes.snapshot()
-	if retained[2].result.Readiness != diagnose.ReadinessWarming {
+	if retained[1].result.Readiness != diagnose.ReadinessReady ||
+		retained[1].plan.Reason != policy.ReasonNone {
 		t.Errorf(
-			"cleared change readiness = %v, want Warming",
-			retained[2].result.Readiness,
+			"saturation change = %v/%v, want Ready with no policy reason",
+			retained[1].result.Readiness,
+			retained[1].plan.Reason,
 		)
 	}
 	for index, entry := range retained {

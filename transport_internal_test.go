@@ -470,9 +470,9 @@ type testRequestStages struct {
 
 func (s testRequestStages) preflight(
 	snapshot requestSnapshot,
-	mode Mode,
+	authority uint64,
 ) (requestState, error) {
-	return requestState{}, s.before(snapshot, mode)
+	return requestState{}, s.before(snapshot, authorityMode(authority))
 }
 
 func (s testRequestStages) postflight(

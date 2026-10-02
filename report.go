@@ -66,7 +66,9 @@ type Decision struct {
 
 	// Candidates holds controls the policy considers eligible. Enforce mode
 	// applies CandidateRetry, subject to replay safety, the caller's deadline,
-	// and retry budgets. CandidateBreakerOpen is not applied yet.
+	// and retry budgets. It applies CandidateBreakerOpen by opening the
+	// target's dependency breaker when a request fails because of the
+	// dependency.
 	Candidates Candidates
 }
 
@@ -344,8 +346,10 @@ const (
 	// budgeted retries of replay-safe requests. Enforce mode applies it.
 	CandidateRetry Candidates = 1 << iota
 
-	// CandidateBreakerOpen marks dependency failure or sustained rate limiting
-	// as eligible for opening a dependency breaker. It is not applied yet.
+	// CandidateBreakerOpen marks a dependency that is down as eligible for
+	// opening its dependency breaker. Enforce mode applies it, and requests
+	// then fail fast with ErrBreakerOpen until a probe shows that the
+	// dependency answers again.
 	CandidateBreakerOpen
 )
 

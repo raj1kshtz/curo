@@ -15,9 +15,9 @@ changes will always be listed here under **Changed** or **Removed**.
 - Project foundation: Apache-2.0 licence, contribution guide, code of conduct, security
   policy, governance model and CI pipeline.
 - ADR lifecycle and authoring guidance, plus Architecture Decision Records
-  `0001` through `0007` covering the embedded Go library, host application
+  `0001` through `0008` covering the embedded Go library, host application
   inviolability, adaptive policy, dependencies, operating modes, retry
-  budgets, and package boundaries.
+  budgets, package boundaries, and dependency breakers.
 - Engine high-level design with reviewed context, component, runtime,
   containment, state-ownership, and mitigation-control diagrams.
 - Initial public transport API with explicit base ownership, validated
@@ -34,10 +34,9 @@ changes will always be listed here under **Changed** or **Removed**.
 - Bounded readiness and deterministic internal diagnosis using disjoint recent
   and historical evidence, closed classes, fixed reason codes, and expiring
   immutable results.
-- Policy version 1 control candidates: a `Ready` `Transient` diagnosis selects
-  a retry candidate, and a `Ready` `DependencyDown` or `Saturation` diagnosis
-  selects a breaker-open candidate. Only the retry candidate is applied, and
-  only in `Enforce`.
+- Policy version 2 control candidates: a `Ready` `Transient` diagnosis selects
+  a retry candidate, and a `Ready` `DependencyDown` diagnosis selects a
+  breaker-open candidate. Candidates are applied only in `Enforce`.
 - `Transport.Report` with detached per-target decisions covering normalized
   identity, readiness, diagnosis, ordered reason codes, recent and historical
   evidence summaries, policy version, candidates, and evaluation and expiry
@@ -54,5 +53,24 @@ changes will always be listed here under **Changed** or **Removed**.
   a mode change, `Close`, or self-disable withdraws a retry that has not
   started.
 - `Stats` fields `RetryAttempts`, `RetrySuccesses`, and `RetryBudgetDenials`.
+- Adaptive dependency breakers in `Enforce`: a dependency failure opens a
+  target's breaker when its current decision selects the breaker-open
+  candidate. While the breaker is open, requests to the target fail fast with
+  `ErrBreakerOpen` without being sent. After a cooldown that starts at 5
+  seconds and doubles up to 60 seconds, one request at a time is sent as a
+  probe, and any response other than 429 or 5xx closes the breaker.
+- `ErrBreakerOpen`, plus `Stats` fields `BreakerOpens`, `BreakerProbes`, and
+  `BreakerRejections`.
+
+### Changed
+
+- Policy version 2 replaces version 1. A `Saturation` diagnosis no longer
+  selects the breaker-open candidate and is reported without a candidate.
+
+### Fixed
+
+- A request whose deprecated `Cancel` channel is closed, as `http.Client` does
+  when its `Timeout` expires, is recorded as a caller cancellation instead of
+  a dependency failure.
 
 [Unreleased]: https://github.com/raj1kshtz/curo/commits/main

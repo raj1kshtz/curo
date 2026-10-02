@@ -279,7 +279,7 @@ func TestReasonsFromStaysBounded(t *testing.T) {
 }
 
 func newClockedTransport(
-	t *testing.T,
+	t testing.TB,
 	base http.RoundTripper,
 	now func() time.Time,
 ) *Transport {
@@ -291,7 +291,12 @@ func newClockedTransport(
 	}
 	observer := observe.NewWithClock(now)
 	transport.observer = observer
-	transport.stages = newAdaptiveStages(observer, &transport.retries)
+	transport.stages = newAdaptiveStages(
+		observer,
+		&transport.retries,
+		&transport.breakers,
+		transport.authorized,
+	)
 	transport.reports = observer.Report
 
 	return transport

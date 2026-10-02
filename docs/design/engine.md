@@ -1,7 +1,7 @@
 # Curo Engine High-Level Design
 
 - **Status:** Design target for `v0.1.0`
-- **Updated:** 2026-09-30
+- **Updated:** 2026-10-02
 - **Scope:** Embedded Go engine for outbound `net/http` calls
 - **Audience:** Maintainers, contributors, reviewers, and adopters
 
@@ -45,6 +45,8 @@ This design is governed by the following accepted ADRs:
   aggregate retry budgets.
 - [ADR-0007](../adr/0007-root-api-and-internal-packages.md):
   root public API and internal implementation.
+- [ADR-0008](../adr/0008-adaptive-dependency-breakers.md):
+  adaptive dependency breakers.
 
 If this document conflicts with an accepted ADR, the ADR controls and this
 document must be corrected.
@@ -166,8 +168,10 @@ The current public surface is deliberately limited to `Transport`, `Mode`,
 and lifecycle close. Report values use closed enums and copied fields, so
 internal registries, evaluation state, and policy types stay private. Retries
 add no public type or option: their bounds are fixed internal constants, and
-their aggregate counts appear in `Stats`. Replay opt-in for unsafe methods,
-mitigation configuration, and applied-action auditing remain deferred.
+their aggregate counts appear in `Stats`. Dependency breakers add only the
+`ErrBreakerOpen` sentinel error and aggregate `Stats` counters, and their
+bounds are fixed as well. Replay opt-in for unsafe methods, mitigation
+configuration, and applied-action auditing remain deferred.
 
 ### 7.2 Transport Adapter
 
@@ -190,6 +194,10 @@ When `Enforce` retries a request, guarded retry stages run after postflight
 and are followed by one more unguarded base call. That retry call has no
 postflight: its result is returned as captured.
 
+When a completed `Enforce` preflight finds the target's dependency breaker
+open, the adapter closes the request body and returns `ErrBreakerOpen`
+without calling the base transport. That request has no postflight.
+
 ### 7.3 Guard
 
 The guard owns:
@@ -210,7 +218,8 @@ snapshot inside the same guard, including after self-disable, and its failures
 contribute as well. The base transport remains outside the guard. The retry
 path adds guarded preparation and commit stages. It closes a discarded
 response body through a containment boundary that runs even after
-self-disable, because the body must still be released.
+self-disable, because the body must still be released. The body of a request
+rejected by a dependency breaker is closed through the same boundary.
 
 ### 7.4 Mode Gate
 
@@ -243,6 +252,9 @@ never regains authority it lost. Authority is checked before and after the
 backoff. A revocation does not interrupt the wait, so one that happens during
 it takes effect when the wait ends, at most 100 milliseconds later.
 
+Opening a dependency breaker is also a new intervention. A request whose
+authority was revoked before postflight processes its result cannot open one.
+
 ### 7.5 Observer
 
 The observer converts a completed attempt into bounded evidence. It records
@@ -258,8 +270,10 @@ exposes aggregate counts through `Transport.Stats`. Each recorded initial
 attempt on a regular target also funds that target's retry budget and the
 instance retry budget. Retry attempts are counted only in aggregate `Stats`:
 they never enter evidence or fund a budget, so they cannot inflate demand or
-influence diagnosis. Per-target retry, probe, and in-flight evidence remain
-deferred.
+influence diagnosis. A dependency breaker probe is recorded as an initial
+attempt, and its result also settles the breaker. A request rejected by an
+open breaker makes no attempt and is not recorded. Per-target retry, separate
+probe, and in-flight evidence remain deferred.
 
 ### 7.6 Diagnoser
 
@@ -300,7 +314,7 @@ action plan. The plan may contain:
 A plan is not authority. The mitigation coordinator still verifies mode,
 freshness, request eligibility, context, and capacity.
 
-The implemented evaluator is a pure internal package with policy version 1.
+The implemented evaluator is a pure internal package with policy version 2.
 It runs whenever a diagnosis is published, under the same target lock, and
 maps classes to a closed candidate set:
 
@@ -308,15 +322,19 @@ maps classes to a closed candidate set:
 | --------- | --------- |
 | `Transient` | Retry |
 | `DependencyDown` | Breaker open |
-| `Saturation` | Breaker open |
 | Any other class | None |
 
 Candidates require `Ready` evidence. A mapped class without it selects no
 candidate and records a `ReadinessRequired` reason. A plan expires with the
 diagnosis it was derived from. Plans are published through `Transport.Report`.
 In `Enforce`, a current plan with the retry candidate lets the retry control
-proceed with its own checks. The breaker-open candidate is reported but not
-applied.
+proceed with its own checks, and a current plan with the breaker-open
+candidate lets a dependency failure open the target's dependency breaker.
+
+Version 1 also mapped `Saturation` to the breaker-open candidate. Version 2
+reports `Saturation` without a candidate because a rate-limiting dependency is
+still answering, and failing every request fast would turn throttling into an
+outage. A throttling control requires its own decision.
 
 ### 7.8 Mitigation Coordinator
 
@@ -326,11 +344,15 @@ timeouts. It does not own long-term evidence.
 Before network I/O, it copies all required state into an immutable request
 snapshot and releases internal locks.
 
-The implemented coordinator covers retries only and lives in the root
-transport. Postflight checks request eligibility and reserves retry budget. A
-final guarded commit check after the backoff verifies authority, caller
-cancellation and deadline, and the published plan again. No lock is held
-during the backoff or either base transport call.
+The implemented coordinator covers retries and dependency breakers and lives
+in the root transport. In `Enforce`, preflight consults the target's breaker
+and may reject the request or select it as a probe. Postflight settles a
+probe, opens the breaker when the request's own dependency failure meets a
+current breaker-open plan and the request's authority is still current, then
+checks request eligibility and reserves retry budget. A final guarded commit
+check after the backoff verifies authority, caller cancellation and deadline,
+a closed breaker, and the published plan again. No lock is held during the
+backoff or either base transport call.
 
 ### 7.9 Base Transport
 
@@ -373,9 +395,9 @@ For each new request:
 8. Return the original captured result unchanged.
 
 Observe does not add a timeout, delay, retry, fail-fast response, or breaker
-probe. It funds retry budgets from recorded initial attempts but never
-reserves from them, so credit earned while observing is available after a
-switch to `Enforce`.
+probe, and it never opens a dependency breaker. It funds retry budgets from
+recorded initial attempts but never reserves from them, so credit earned while
+observing is available after a switch to `Enforce`.
 
 The current implementation performs steps 1 through 6 and step 8. Step 7 is
 pull-based: a candidate change is retained in a bounded journal that
@@ -401,8 +423,20 @@ For each new request:
 The exact result-selection rule across multiple completed attempts is part of
 the public error and response contract.
 
-The current implementation has no breaker or timeout gates, so steps 2 and 3
-do nothing yet. Steps 6 through 9 implement the retry path:
+The current implementation has no timeout gate. Steps 2 and 3 apply the
+target's dependency breaker, whose state changes under the target lock rather
+than through a separate action snapshot:
+
+1. A closed breaker lets the request continue.
+2. While the breaker is open, the request fails fast with `ErrBreakerOpen`:
+   Curo closes its body, skips steps 4 through 11, and records nothing.
+3. After the cooldown, one request becomes a probe and continues. Other
+   requests fail fast until its result settles the breaker.
+
+In step 6, postflight settles a probe, and it opens a closed breaker when the
+request's own attempt was a dependency failure, the target's published plan
+selects the breaker-open candidate, and the request's authority is still
+current. Steps 6 through 9 implement the retry path:
 
 1. Postflight records the initial attempt, refreshes an expired decision, and
    checks retry eligibility. Its last step reserves one token from both retry
@@ -411,16 +445,17 @@ do nothing yet. Steps 6 through 9 implement the retry path:
    and obtains a fresh body from `GetBody` when the request has one.
 3. A final guarded commit check confirms that the request's authority is still
    current, the caller has not canceled the request, the caller's deadline
-   still leaves time for an attempt as long as the first, and the target's
-   published plan still permits a retry.
+   still leaves time for an attempt as long as the first, the target's
+   breaker is still closed, and its published plan still permits a retry.
 4. Curo commits the reservation, closes the discarded first response body,
    and calls the base transport once more with the clone.
 
 Step 10 is not implemented: decisions are reported without applied-action
-records, and `Stats` counts retries in aggregate. For step 11, a retry that
-starts supplies the result, whether a response, an error, or a panic from the
-base transport. A request without a started retry returns its first captured
-result untouched. A request makes at most two base transport calls.
+records, and `Stats` counts retries and breaker transitions in aggregate. For
+step 11, a retry that starts supplies the result, whether a response, an
+error, or a panic from the base transport. A request without a started retry
+returns its first captured result untouched. A request makes at most two base
+transport calls, and a probe makes one because it is never retried.
 
 ## 9. Failure Containment
 
@@ -435,10 +470,11 @@ Instead, it guards only Curo-owned partitions:
 
 ```text
 mode and self-disable check
-    -> guarded preflight
+    -> guarded preflight and breaker admission
+    -> when the breaker rejects: contained request body close, ErrBreakerOpen
     -> unguarded base RoundTrip
     -> capture response and error
-    -> guarded postflight and retry reservation
+    -> guarded postflight, breaker transition, and retry reservation
     -> guarded backoff, clone, and body replay
     -> guarded commit check
     -> contained close of the discarded response body
@@ -449,6 +485,12 @@ mode and self-disable check
 This structure preserves host-owned transport panics and removes Curo-owned
 fallible work from the interval between starting an attempt and capturing its
 result.
+
+A breaker rejects a request only after preflight completes. If preflight fails
+or the guard has self-disabled, the request reaches the base transport
+unchanged, so a Curo failure never makes a request fail fast. Closing a
+rejected request's body cannot change its result: a `Close` error is ignored,
+and a `Close` panic is counted as an internal failure.
 
 If a retry stage before the commit fails or declines, Curo returns the reserved
 token to both budgets and the first captured result to the caller. A failure
@@ -549,7 +591,10 @@ The concurrency model is:
 
 - Atomic loads for mode, self-disable, and immutable policy pointers.
 - A short registry-shard lock for target lookup or admission.
-- A short per-target lock for evidence and state transitions.
+- A short per-target lock for evidence and state transitions, including
+  dependency breaker transitions.
+- An atomic per-target flag that lets a request pass a closed dependency
+  breaker without the target lock or a clock read.
 - A short change-journal lock for recording or copying candidate changes.
 - Immutable copies for policy evaluation and network attempts.
 - Lock-free atomic words for retry budgets and reservations.
@@ -646,7 +691,8 @@ window. A completed initial attempt increments exactly one outcome:
 
 HTTP response class is a parallel bounded dimension whenever a response
 exists. Therefore attempt count equals the sum of the five outcome counts.
-Retry, probe, and in-flight high-water evidence remain deferred.
+Separate retry, probe, and in-flight high-water evidence remain deferred. A
+dependency breaker probe is recorded as an initial attempt.
 
 Each attempt also contributes exactly one diagnosis signal:
 
@@ -674,6 +720,11 @@ dropped rather than erasing current evidence.
 
 Snapshot reads include only generations inside the requested window. Old ring
 slots are ignored even if a target resumes after a long idle interval.
+
+When a probe closes a dependency breaker, recent snapshots start at the next
+10-second bucket after the close, or after the latest evidence already
+recorded if that is later. Evidence recorded before the close therefore cannot
+open the breaker again. Historical snapshots are not fenced.
 
 Each actionable target also owns 30 fixed one-minute historical buckets.
 Historical snapshots omit every bucket that overlaps the two-minute recent
@@ -790,19 +841,23 @@ Safety precedence is:
 
 A stale policy version or expired plan is rejected before use.
 
-The implemented version 1 evaluator uses only the published diagnosis:
+The implemented version 2 evaluator uses only the published diagnosis:
 class, readiness, and expiry. Its readiness gate is the first implemented
 safety precedence rule. The retry control checks mode, request eligibility,
-cancellation, deadline, and budget itself rather than passing them through
-the evaluator. Breaker and timeout inputs are added with the controls that
-consume them.
+cancellation, deadline, breaker state, and budget itself rather than passing
+them through the evaluator. The dependency breaker likewise checks its own
+state, the request's authority, and the request's outcome. Timeout inputs are
+added with the control that consumes them.
 
-The retry control is the first plan consumer. It uses a plan only when the
-target is live and the plan has the current policy version, contains the
-retry candidate, and has not expired. It checks again after the backoff and
-never evaluates a diagnosis itself. Plans refresh lazily during completion
+The retry control and the dependency breaker consume plans. Each uses a plan
+only when the target is live and the plan has the current policy version,
+contains its candidate, and has not expired. The retry control checks again
+after the backoff, and opening a breaker checks again under the target lock.
+Neither evaluates a diagnosis itself. Plans refresh lazily during completion
 traffic, so a failure that arrives while an earlier `Healthy` plan is still
-current is not retried.
+current is not retried and does not open a breaker. A probe that closes a
+breaker is the exception: it re-evaluates at once, as described for the
+dependency breaker.
 
 ## 15. Mitigation Controls
 
@@ -882,8 +937,11 @@ The implemented eligibility rules are:
   request's deprecated `Cancel` channel is nil or open, and any deadline
   leaves more than the backoff plus the initial attempt's latency.
 - **Authority:** the request started in `Enforce`.
+- **Breaker:** the target's dependency breaker is closed when the retry is
+  reserved and again at the commit check, and the request is not a probe.
 
-No breaker exists yet, so no breaker state forbids a retry.
+A retry that has not started when its target's breaker opens is withdrawn,
+and its request returns the first result.
 
 An `http.Client` with a `Timeout` sets the deprecated `Cancel` channel on
 requests sent through a transport it does not recognize, which includes Curo,
@@ -894,9 +952,9 @@ channel needs no goroutine.
 
 Reservation is the last postflight check, so a denied reservation means every
 other condition held, and it increments `RetryBudgetDenials`. After the
-backoff, the commit check repeats the authority, cancellation, deadline, and
-plan checks. The remaining deadline must then exceed only the initial
-attempt's latency.
+backoff, the commit check repeats the authority, cancellation, deadline,
+breaker, and plan checks. The remaining deadline must then exceed only the
+initial attempt's latency.
 
 The retry request is a clone of the original with the same context and
 `Cancel` channel. `GetBody` is called once, after the backoff and before the
@@ -934,6 +992,78 @@ to Enforce may reuse it only when evidence is fresh and ready.
 
 The dependency breaker is separate from Curo's internal self-disable state.
 
+[ADR-0008](../adr/0008-adaptive-dependency-breakers.md) records the
+implemented contract. Each regular target owns one breaker in `Closed`, `Open`,
+or `Probing` state. It is a deterministic internal state machine that reads no
+clock and takes no lock of its own: the observer drives it with observer time
+under the target lock, and its transitions never move backwards in time. The
+overflow aggregate has no breaker.
+
+| Parameter | Value |
+| --------- | ----- |
+| First cooldown | 5 seconds |
+| Escalation | Doubles after each failed or expired probe, and after each reopening within the probation period |
+| Maximum cooldown | 60 seconds |
+| Probe leases | One at a time, each lasting 30 seconds |
+| Probation | 2 minutes after a close |
+
+The implemented transitions are:
+
+- **Open:** a closed breaker opens when an `Enforce` request that it admitted
+  completes with a dependency failure, the target's published plan is
+  current and selects the breaker-open candidate, and the request's authority
+  is still current. An opening within the probation period of the latest
+  close continues the previous escalation; a later one starts at 5 seconds.
+- **Reject:** while the cooldown runs, and while a probe holds the lease,
+  `Enforce` requests fail fast with `ErrBreakerOpen`.
+- **Probe:** after the cooldown, the next `Enforce` request becomes the probe
+  and moves the breaker to `Probing`, unless its context is done or its
+  `Cancel` channel is closed. Such a request is rejected instead. A probe is
+  sent unchanged and is never retried.
+- **Close:** any probe response other than 429 or 5xx, without a transport
+  error, closes the breaker, because the dependency answered. A close keeps
+  the escalation level for the probation period.
+- **Reopen:** a 429, a 5xx, or a transport error or timeout attributed to the
+  dependency reopens the breaker with a doubled cooldown. A lease that expires
+  without a result counts as a failed probe as of its deadline. A probe that
+  the caller canceled, or whose caller deadline expired, reopens the breaker
+  for 5 seconds without escalation.
+
+A result that arrives after its lease expired can still close the breaker if
+the dependency answered, because it shows recovery. Its other outcomes are
+ignored, since the expiry already counted as a failure. Results of leases from
+an earlier open episode are always ignored.
+
+When a probe closes the breaker, the observer fences the recent window, as
+described in the observation model, and re-evaluates at once. The published
+decision then has `Stale` readiness and no candidates until fresh evidence
+arrives. Without the re-evaluation, the next dependency failure would meet the
+plan that opened the breaker and open it again immediately. If that plan
+selected a candidate, the re-evaluation records a candidate change.
+
+Authority follows the operating modes:
+
+- Only requests that started in `Enforce` consult a breaker. `Off` and
+  `Observe` never reject a request, send a probe, or open a breaker.
+- Opening requires the request's authority to still be current when
+  postflight processes its result, which is the same linearization point as
+  the retry commit check.
+- Settling a probe does not require authority, because the probe was already
+  sent. A probe that settles after a switch to `Observe` can therefore change
+  the decision that `Observe` reports.
+- Breaker state persists across mode changes. If `Enforce` is restored while
+  a breaker is still open, requests fail fast again until a probe closes it,
+  so an earlier opening affects at most one cooldown plus one probe.
+- Closed and self-disabled transports never reject a request. A probe whose
+  postflight is skipped after self-disable never settles, so its lease
+  expires.
+
+The fast path costs one atomic load: while a target's breaker is closed, a
+request passes without the target lock or a clock read. Rejecting a request
+allocates nothing. Replacing an idle target discards its breaker. A shadow
+breaker in `Observe`, concurrent probe leases, per-target breaker state in the
+decision report, and breaker options remain deferred.
+
 ### 15.3 Adaptive Timeout
 
 An adaptive timeout candidate uses:
@@ -955,20 +1085,22 @@ Observe records the candidate but does not create a new deadline.
 
 | Diagnosis | Retry | Breaker | Timeout |
 | --------- | ----- | ------- | ------- |
-| `Healthy` | No | Close candidate | Baseline only |
+| `Healthy` | No | No | Baseline only |
 | `Transient` | Budgeted candidate | Usually no | Candidate |
 | `DependencyDown` | Probe only | Open candidate | No extension |
-| `Saturation` | Normally no | Open candidate | No extension |
+| `Saturation` | Normally no | No, report only | No extension |
 | `ClientError` | No | No | No |
 | `Degrading` | Limited candidate | Watch or open | Candidate |
 
-Every cell describes eligibility, not a guaranteed action.
+Every cell describes eligibility, not a guaranteed action. A breaker closes
+only through a probe, never through a diagnosis.
 
-Policy version 1 implements only the retry candidate for `Transient` and the
-breaker-open candidate for `DependencyDown` and `Saturation`, each gated on
-`Ready` evidence. Close, probe, watch, limited-retry, and timeout candidates
-are not implemented. `Enforce` applies the retry candidate through the retry
-budget rules above. The breaker-open candidate is reported only.
+Policy version 2 implements only the retry candidate for `Transient` and the
+breaker-open candidate for `DependencyDown`, each gated on `Ready` evidence.
+Probing and closing are breaker transitions rather than candidates. Watch,
+limited-retry, and timeout candidates are not implemented. `Enforce` applies
+the retry candidate through the retry budget rules above and the breaker-open
+candidate through the dependency breaker.
 
 ## 16. Observability and Privacy
 
@@ -991,8 +1123,9 @@ Each proposed or applied action includes bounded fields:
 evaluation and expiry times, normalized target identity, readiness, diagnosis,
 ordered reason codes, recent and historical evidence summaries, policy
 version, and candidates. Mode, applied state, and per-request budget decisions
-are not recorded yet; retries are visible only through aggregate `Stats`
-counters. The diagnosis and plan share one expiry.
+are not recorded yet; retries and dependency breaker transitions are visible
+only through aggregate `Stats` counters. The diagnosis and plan share one
+expiry.
 
 ### 16.2 Excluded Data
 
@@ -1042,13 +1175,15 @@ arbitrary callback, Curo cannot preempt an implementation that blocks forever.
 
 `Transport.Stats` exposes only:
 
-- Completed observed request count.
+- Completed observed request count, excluding requests rejected by a
+  dependency breaker.
 - Current regular target count.
 - Overflow observation count.
 - Retry attempts that Curo started.
 - Retry successes, whose base call returned a 2xx or 3xx response without an
   error.
 - Retry budget denials.
+- Dependency breaker openings, probes, and fail-fast rejections.
 - Contained internal failure count.
 - Sticky self-disable state.
 
@@ -1074,10 +1209,12 @@ logging sinks remain deferred.
 
 A change is recorded when an evaluation selects a different candidate set, or
 the same non-empty set for a different diagnosis class. Renewing an unchanged
-decision is not a change. The journal is not a target lifecycle log: eviction
-and staleness are not recorded. Candidates that lapse while a target is idle
-are cleared, and the change recorded, at its next dependency-relevant
-completion. A change can name a target that has since been replaced.
+decision is not a change. The journal is not a target lifecycle log: eviction,
+staleness, and dependency breaker transitions are not recorded. Candidates
+that lapse while a target is idle are cleared, and the change recorded, at its
+next dependency-relevant completion. A probe that closes a breaker clears the
+target's candidates at once and records that change. A change can name a
+target that has since been replaced.
 
 Report never evaluates evidence or reads the clock. An idle target keeps its
 last decision, so consumers compare `ExpiresAt` with the current time. The
@@ -1121,7 +1258,9 @@ continue using it after any construction error.
 
 Mode changes are atomic. They affect requests that have not yet taken their
 mode snapshot. An effective change also withdraws every retry that has not
-started, as described for the mode gate.
+started, as described for the mode gate, and prevents in-flight requests from
+opening a dependency breaker. Breaker state persists across mode changes, and
+a probe already sent still settles its breaker.
 
 `Off` stops new observation but does not synchronously erase state. State ages
 normally and is invalidated by freshness checks.
@@ -1150,10 +1289,11 @@ Close is idempotent:
 - Do not wait for arbitrary host callback work.
 
 In-flight requests use their captured snapshots and results. A retry that has
-not started is withdrawn, and its request returns its first result. After
-close, new requests use direct pass-through, mode changes return `ErrClosed`,
-and the configured mode, aggregate statistics, and decision report remain
-readable.
+not started is withdrawn, and its request returns its first result. An
+in-flight request can no longer open a dependency breaker, but an in-flight
+probe still settles one. After close, new requests use direct pass-through,
+so no breaker rejects them, mode changes return `ErrClosed`, and the
+configured mode, aggregate statistics, and decision report remain readable.
 Close retains the bounded observer state so an in-flight postflight can finish
 safely.
 
@@ -1175,6 +1315,11 @@ safely.
 | Mode change, close, or self-disable before a retry starts | Withdraw the retry, return the first result |
 | Discarded body close error | Ignore, continue the retry |
 | Discarded body close panic | Count, continue the retry |
+| Dependency breaker open in `Enforce` | Close the request body, return `ErrBreakerOpen` without an attempt |
+| Rejected request body close error | Ignore, return `ErrBreakerOpen` |
+| Rejected request body close panic | Count, return `ErrBreakerOpen` |
+| Probe lease expires without a result | Count a failed probe, reopen with a longer cooldown |
+| Mode change, close, or self-disable before a dependency failure is processed | Do not open the breaker |
 | Caller context done | Stop waits and attempts |
 | Base transport panic | Preserve host transport semantics |
 | Runtime fatal or OOM | Outside recoverable guarantee |
@@ -1201,15 +1346,17 @@ Latency and allocation benchmarks compare Curo modes with the same base
 transport. The initial harness establishes a local baseline; numerical
 regression gates wait for a repeatable CI benchmark environment.
 
-The observer, diagnoser, policy, and retry budget store 9,464 bytes of bounded
-target state on 64-bit platforms. The 128 regular targets plus overflow
-aggregate therefore use about 1.16 MiB, and the 256-entry change journal adds
-38,928 bytes, excluding bounded map and key overhead. A report allocates
-detached copies of at most 128 decisions and 256 changes.
+The observer, diagnoser, policy, retry budget, and dependency breaker store
+9,520 bytes of bounded target state on 64-bit platforms. The 128 regular
+targets plus overflow aggregate therefore use about 1.17 MiB, and the
+256-entry change journal adds 38,928 bytes, excluding bounded map and key
+overhead. A report allocates detached copies of at most 128 decisions and 256
+changes.
 Benchmarks cover Off, warm Observe, and warm Enforce paths with an already
-canonical target and no retry; all three perform zero Curo heap allocations
-per request with the benchmark base transport. Inputs that require case or IP
-normalization may use bounded transient allocation.
+canonical target and no retry, plus a request rejected by an open dependency
+breaker; all four perform zero Curo heap allocations per request with the
+benchmark base transport. Inputs that require case or IP normalization may use
+bounded transient allocation.
 
 ## 20. Security Considerations
 
@@ -1298,6 +1445,7 @@ Benchmark:
 - Off pass-through.
 - Observe on an admitted target.
 - Enforce without an action.
+- Fail-fast rejection by an open dependency breaker.
 - Retry budget acquisition.
 - Registry hit, miss, overflow, and expiry.
 - Concurrent observation updates.
@@ -1354,26 +1502,37 @@ The initial contract is:
 - Decisions expose normalized target identity, readiness, diagnosis, ordered
   reason codes, recent and historical evidence summaries, policy version,
   candidates, and evaluation and expiry times. Report enums are closed, and
-  their `String` methods return stable names. Only `Enforce` applies a
-  candidate, and only `CandidateRetry`.
+  their `String` methods return stable names. Only `Enforce` applies
+  candidates: `CandidateRetry` through retries and `CandidateBreakerOpen`
+  through dependency breakers.
 - Target state is bounded to 128 regular identities and one non-actionable
   overflow aggregate. Paths, queries, headers, bodies, URL user information,
   and raw error text are not retained.
-- In `Off` and `Observe`, and in `Enforce` when no retry starts, `RoundTrip`
-  passes the original request to the base exactly once and preserves its
-  response, error, and panic behavior.
+- In `Off` and `Observe`, and in `Enforce` when no breaker rejects the request
+  and no retry starts, `RoundTrip` passes the original request to the base
+  exactly once and preserves its response, error, and panic behavior.
 - In `Enforce`, a replay-safe request whose initial attempt failed with a
   transport error, or with a 502, 503, or 504 response without `Retry-After`,
   may be retried once as a clone after a cancellable 25 to 100 millisecond
-  backoff. The target's current decision must select `CandidateRetry`, the
-  caller must not have canceled the request through its context or `Cancel`
-  channel, the caller's deadline must leave time, and both retry budgets must
-  hold a token.
+  backoff. The target's current decision must select `CandidateRetry`, its
+  dependency breaker must be closed, the caller must not have canceled the
+  request through its context or `Cancel` channel, the caller's deadline must
+  leave time, and both retry budgets must hold a token.
   A started retry's response, error, or panic is the result, and the
   discarded first response body is closed.
 - A mode change, close, or self-disable withdraws a retry that has not
   started, and the request returns its first result untouched.
-- `Stats` counts retry attempts, retry successes, and retry budget denials.
+- In `Enforce`, a target's dependency breaker opens when a request's own
+  dependency failure meets a current decision that selects
+  `CandidateBreakerOpen`. While it is open, `RoundTrip` closes the request
+  body and returns a nil response and `ErrBreakerOpen` without calling the
+  base transport. After a cooldown of 5 to 60 seconds, one request at a time
+  is sent unchanged as a probe, and a probe is never retried. Any probe
+  response other than 429 or 5xx closes the breaker.
+- `Off`, `Observe`, closed, and self-disabled transports never reject a
+  request with `ErrBreakerOpen`, and a Curo failure never causes a rejection.
+- `Stats` counts retry attempts, retry successes, retry budget denials,
+  breaker openings, breaker probes, and breaker rejections.
 
 The following surfaces remain deferred until their implementations exist:
 
@@ -1381,11 +1540,11 @@ The following surfaces remain deferred until their implementations exist:
   evidence access.
 - Replay opt-in for unsafe methods.
 - Callback or logging delivery of decisions and candidate changes.
-- Mode, applied-action, and budget fields in decision records.
+- Mode, applied-action, budget, and breaker-state fields in decision records.
 - Detailed internal-failure events and logging sinks.
-- Fail-fast and internal-failure error types.
+- Internal-failure error types.
 - Self-disable reset.
-- Capacity, expiry, window, budget, and timeout options.
+- Capacity, expiry, window, budget, breaker, and timeout options.
 
 Each deferred surface requires API review alongside the code that gives it
 meaning.

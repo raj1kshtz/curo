@@ -7,7 +7,10 @@ package policy
 import "github.com/raj1kshtz/curo/internal/diagnose"
 
 // Version identifies the candidate rule set recorded with each Plan.
-const Version uint32 = 1
+//
+// Version 2 stopped selecting CandidateBreakerOpen for Saturation, which is
+// now reported without a candidate.
+const Version uint32 = 2
 
 // Candidate is a set of controls eligible for later enforcement.
 type Candidate uint8
@@ -17,8 +20,8 @@ const (
 	// retries of replay-safe requests.
 	CandidateRetry Candidate = 1 << iota
 
-	// CandidateBreakerOpen marks dependency failure or sustained rate limiting
-	// as eligible for opening a dependency breaker.
+	// CandidateBreakerOpen marks a dependency outage as eligible for opening
+	// the target's dependency breaker.
 	CandidateBreakerOpen
 )
 
@@ -69,7 +72,7 @@ func candidatesFor(class diagnose.Class) Candidate {
 	switch class {
 	case diagnose.ClassTransient:
 		return CandidateRetry
-	case diagnose.ClassDependencyDown, diagnose.ClassSaturation:
+	case diagnose.ClassDependencyDown:
 		return CandidateBreakerOpen
 	default:
 		return 0

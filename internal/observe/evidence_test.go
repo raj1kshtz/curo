@@ -11,6 +11,7 @@ import (
 	"time"
 	"unsafe"
 
+	"github.com/raj1kshtz/curo/internal/breaker"
 	"github.com/raj1kshtz/curo/internal/diagnose"
 	"github.com/raj1kshtz/curo/internal/policy"
 )
@@ -431,6 +432,7 @@ func TestEvidenceStateCannotRetainSensitiveValues(t *testing.T) {
 		reflect.TypeOf(change{}),
 		reflect.TypeOf(diagnose.Result{}),
 		reflect.TypeOf(policy.Plan{}),
+		reflect.TypeOf(breaker.Breaker{}),
 	} {
 		if !visited[valueType] {
 			t.Errorf("%s was not inspected", valueType)
@@ -443,7 +445,7 @@ func TestEvidenceStateCannotRetainSensitiveValues(t *testing.T) {
 	}
 	if unsafe.Sizeof(uintptr(0)) == 8 {
 		const (
-			documentedTargetBytes  = 9_464
+			documentedTargetBytes  = 9_520
 			documentedJournalBytes = 38_928
 		)
 		if got := unsafe.Sizeof(target{}); got != documentedTargetBytes {

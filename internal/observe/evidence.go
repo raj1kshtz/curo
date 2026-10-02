@@ -9,6 +9,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/raj1kshtz/curo/internal/breaker"
 	"github.com/raj1kshtz/curo/internal/retry"
 )
 
@@ -104,9 +105,15 @@ type target struct {
 	baseline [baselineBucketCount]baselineBucket
 
 	diagnosis   diagnosisState
+	breaker     breaker.Breaker
+	recentFloor int64
 	mu          sync.Mutex
 	lastSeen    atomic.Int64
 	retryBudget retry.Budget
+
+	// engaged mirrors breaker.State() != breaker.Closed, so requests to a
+	// target with a closed breaker skip the lock.
+	engaged atomic.Bool
 
 	actionable bool
 	retired    bool
@@ -147,15 +154,43 @@ func (target *target) record(tick int64, value observation) bool {
 	if target == nil {
 		return false
 	}
+
+	recorded, _ := target.complete(tick, value, 0, false)
+	return recorded
+}
+
+// complete records one finished attempt and applies its breaker effects under
+// one lock. A non-zero probe lease is settled with the attempt's outcome, even
+// when the evidence itself arrived too late to record. For a dependency
+// failure that a closed breaker admitted, complete reports whether the
+// breaker may open.
+func (target *target) complete(
+	tick int64,
+	value observation,
+	probe uint64,
+	admitted bool,
+) (bool, bool) {
 	if tick < 0 {
 		tick = 0
 	}
 
-	epoch := tick / int64(observationBucketWidth)
-	index := int(epoch % observationBucketCount)
-
 	target.mu.Lock()
 	defer target.mu.Unlock()
+
+	recorded := target.recordLocked(tick, value)
+	if probe != 0 {
+		target.settleLocked(probe, value.signal, tick)
+	}
+	trip := admitted &&
+		value.signal == diagnosisDependencyFailure &&
+		target.mayTripLocked(tick)
+
+	return recorded, trip
+}
+
+func (target *target) recordLocked(tick int64, value observation) bool {
+	epoch := tick / int64(observationBucketWidth)
+	index := int(epoch % observationBucketCount)
 
 	bucket := &target.buckets[index]
 	if bucket.epoch > epoch {

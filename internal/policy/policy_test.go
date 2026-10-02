@@ -17,7 +17,7 @@ func TestEvaluateMapsReadyDiagnosesToCandidates(t *testing.T) {
 		"healthy":         {class: diagnose.ClassHealthy},
 		"transient":       {class: diagnose.ClassTransient, want: CandidateRetry},
 		"dependency down": {class: diagnose.ClassDependencyDown, want: CandidateBreakerOpen},
-		"saturation":      {class: diagnose.ClassSaturation, want: CandidateBreakerOpen},
+		"saturation":      {class: diagnose.ClassSaturation},
 		"client error":    {class: diagnose.ClassClientError},
 		"degrading":       {class: diagnose.ClassDegrading},
 		"unknown":         {class: diagnose.Class(255)},
@@ -73,5 +73,21 @@ func TestEvaluateZeroResultHasNoCandidates(t *testing.T) {
 	plan := Evaluate(diagnose.Result{})
 	if plan != (Plan{Version: Version}) {
 		t.Errorf("zero result plan = %+v, want only the policy version", plan)
+	}
+}
+
+func TestVersionTwoReportsSaturationWithoutCandidates(t *testing.T) {
+	t.Parallel()
+
+	if Version != 2 {
+		t.Fatalf("Version = %d, want 2", Version)
+	}
+
+	plan := Evaluate(diagnose.Result{
+		Readiness: diagnose.ReadinessReady,
+		Class:     diagnose.ClassSaturation,
+	})
+	if plan.Candidates != 0 || plan.Reason != ReasonNone {
+		t.Errorf("saturation plan = %+v, want no candidates and no policy reason", plan)
 	}
 }

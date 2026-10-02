@@ -518,3 +518,19 @@ func TestRecentExpirySaturates(t *testing.T) {
 		t.Errorf("recent expiry = %d, want MaxInt64", accumulator.expiresAt)
 	}
 }
+
+func TestAddLastTickIgnoresBucketsWithoutTicks(t *testing.T) {
+	t.Parallel()
+
+	var accumulator windowAccumulator
+	accumulator.addLastTick(5, false)
+	if accumulator.hasLastTick {
+		t.Fatal("bucket without ticks set the last tick")
+	}
+
+	accumulator.addLastTick(7, true)
+	accumulator.addLastTick(3, true)
+	if !accumulator.hasLastTick || accumulator.window.LastTick != 7 {
+		t.Errorf("last tick = %d, want 7", accumulator.window.LastTick)
+	}
+}

@@ -23,6 +23,8 @@ together. Code and API documentation define the exact implementation.
    [Govern Retries with Aggregate Budgets](0006-retry-budgets.md)
 7. **ADR-0007 - Accepted**
    [Expose the Public API at the Module Root](0007-root-api-and-internal-packages.md)
+8. **ADR-0008 - Accepted**
+   [Fail Fast Through Adaptive Dependency Breakers](0008-adaptive-dependency-breakers.md)
 
 ## Lifecycle
 

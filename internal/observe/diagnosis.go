@@ -198,9 +198,12 @@ func (target *target) snapshotLocked(tick int64) diagnose.Snapshot {
 	var recent windowAccumulator
 	currentEpoch := tick / int64(observationBucketWidth)
 	firstEpoch := currentEpoch - observationBucketCount + 1
+	// Closing the dependency breaker fences everything recorded before the
+	// close out of the recent window. The historical cutoff is unchanged.
+	recentFirst := max(firstEpoch, target.recentFloor)
 	for index := range target.buckets {
 		bucket := &target.buckets[index]
-		if bucket.epoch < firstEpoch || bucket.epoch > currentEpoch {
+		if bucket.epoch < recentFirst || bucket.epoch > currentEpoch {
 			continue
 		}
 

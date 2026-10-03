@@ -8,6 +8,7 @@ import (
 
 	"github.com/raj1kshtz/curo/internal/diagnose"
 	"github.com/raj1kshtz/curo/internal/retry"
+	"github.com/raj1kshtz/curo/internal/timeout"
 )
 
 // Request is the bounded request metadata accepted by Observer.
@@ -26,7 +27,11 @@ type Request struct {
 
 // Result is a body-free transport result captured after an attempt.
 type Result struct {
-	Err         error
+	Err error
+
+	// Timeout is the adaptive timeout that ended the attempt, or zero when
+	// Curo did not end it. A non-zero Timeout overrides Err and StatusCode.
+	Timeout     time.Duration
 	StatusCode  int
 	HasResponse bool
 }
@@ -99,29 +104,33 @@ type Observer struct {
 	retryBudget retry.Budget
 }
 
-// New constructs an Observer with bounded production defaults.
-func New() *Observer {
-	return NewWithClock(time.Now)
+// New constructs an Observer with bounded production defaults. Regular
+// targets of read requests select adaptive timeouts within bounds.
+func New(bounds timeout.Bounds) *Observer {
+	return NewWithClock(time.Now, bounds)
 }
 
 // NewWithClock constructs an Observer that reads time from now. A nil clock
 // uses time.Now. It exists so callers can drive deterministic tests.
-func NewWithClock(now func() time.Time) *Observer {
+func NewWithClock(now func() time.Time, bounds timeout.Bounds) *Observer {
 	if now == nil {
 		now = time.Now
 	}
 
 	changes := &journal{}
+	registry := newRegistry(
+		defaultTargetCapacity,
+		defaultShardCount,
+		defaultIdleTTL,
+		changes,
+	)
+	registry.timeouts = bounds
+
 	return &Observer{
-		now:    now,
-		origin: now(),
-		registry: newRegistry(
-			defaultTargetCapacity,
-			defaultShardCount,
-			defaultIdleTTL,
-			changes,
-		),
-		changes: changes,
+		now:      now,
+		origin:   now(),
+		registry: registry,
+		changes:  changes,
 	}
 }
 
@@ -163,6 +172,11 @@ func (observer *Observer) Begin(request Request) Token {
 // Each recorded attempt on a regular target funds that target's retry budget
 // and the instance retry budget. Overflow attempts never fund retries. Finish
 // also settles a breaker probe that Admit started.
+//
+// An attempt that an adaptive timeout ended is recorded as a latency sample
+// at the timeout. It is a dependency failure only when the timeout reached
+// the maximum of the target's bounds. Below that maximum it is only a latency
+// sample, which does not count as evidence about the dependency's health.
 func (observer *Observer) Finish(token Token, result Result) Completion {
 	if observer == nil || token.target == nil {
 		return Completion{}
@@ -172,7 +186,12 @@ func (observer *Observer) Finish(token Token, result Result) Completion {
 	tick := observer.tick(finished)
 	latency := max(finished.Sub(token.started), 0)
 
-	value := classify(result, token.callerErr(), latency)
+	var value observation
+	if result.Timeout > 0 {
+		value = censored(result.Timeout, token.target.timeouts)
+	} else {
+		value = classify(result, token.callerErr(), latency)
+	}
 	recorded, trip := token.target.complete(
 		tick,
 		value,
@@ -232,6 +251,36 @@ func (observer *Observer) RetryPermitted(token Token) bool {
 	}
 
 	return token.target.retryPermitted(observer.tick(observer.now()))
+}
+
+// Timeout returns the adaptive timeout for token's request, or zero when the
+// request has none.
+//
+// Only a request to a live regular target whose published plan is an
+// unexpired current-version plan containing CandidateTimeout has a timeout,
+// and a breaker probe never has one. When the published plan selected a
+// timeout but expired, Timeout evaluates the target again, so a timeout does
+// not lapse while its latency evidence is retained. The next relevant result
+// still evaluates the target, as it would have without that evaluation.
+func (observer *Observer) Timeout(token Token) time.Duration {
+	if observer == nil ||
+		token.target == nil ||
+		token.overflow ||
+		token.probe != 0 {
+		return 0
+	}
+
+	published := token.target.timeout.Load()
+	if published == nil {
+		return 0
+	}
+
+	tick := observer.tick(token.started)
+	if tick < published.expiresAt {
+		return published.limit
+	}
+
+	return token.target.timeoutAt(tick)
 }
 
 // Diagnosis returns the current bounded diagnosis for token's target.

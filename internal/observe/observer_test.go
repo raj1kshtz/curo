@@ -9,13 +9,17 @@ import (
 	"time"
 
 	"github.com/raj1kshtz/curo/internal/diagnose"
+	"github.com/raj1kshtz/curo/internal/timeout"
 )
+
+// noTimeouts disables adaptive timeouts in tests that do not exercise them.
+var noTimeouts = timeout.Bounds{}
 
 func TestObserverRecordsBoundedResultEvidence(t *testing.T) {
 	t.Parallel()
 
 	clock := newObservationClock(time.Unix(1_000, 0))
-	observer := NewWithClock(clock.Now)
+	observer := NewWithClock(clock.Now, noTimeouts)
 	request := Request{
 		Context:  context.Background(),
 		Method:   "GET",
@@ -69,7 +73,7 @@ func TestObserverUsesOverflowForInvalidIdentity(t *testing.T) {
 	t.Parallel()
 
 	clock := newObservationClock(time.Unix(2_000, 0))
-	observer := NewWithClock(clock.Now)
+	observer := NewWithClock(clock.Now, noTimeouts)
 
 	token := observer.Begin(Request{})
 	if !token.overflow {
@@ -99,7 +103,7 @@ func TestObserverUsesCapturedContextForCancellation(t *testing.T) {
 	t.Parallel()
 
 	clock := newObservationClock(time.Unix(3_000, 0))
-	observer := NewWithClock(clock.Now)
+	observer := NewWithClock(clock.Now, noTimeouts)
 	requestContext, cancel := context.WithCancel(context.Background())
 	token := observer.Begin(Request{
 		Context:  requestContext,
@@ -128,7 +132,7 @@ func TestObserverClampsBackwardClock(t *testing.T) {
 
 	origin := time.Unix(4_000, 0)
 	clock := newObservationClock(origin)
-	observer := NewWithClock(clock.Now)
+	observer := NewWithClock(clock.Now, noTimeouts)
 
 	clock.Set(origin.Add(-time.Second))
 	token := observer.Begin(Request{
@@ -155,7 +159,7 @@ func TestObserverDropsOutOfOrderCompletion(t *testing.T) {
 
 	origin := time.Unix(4_500, 0)
 	clock := newObservationClock(origin)
-	observer := NewWithClock(clock.Now)
+	observer := NewWithClock(clock.Now, noTimeouts)
 	token := observer.Begin(Request{
 		Scheme:   "https",
 		Hostname: "example.com",
@@ -191,9 +195,9 @@ func TestObserverHandlesNilReceiversAndTokens(t *testing.T) {
 		t.Errorf("nil Observer Stats() = %#v, want zero", got)
 	}
 
-	observer = NewWithClock(nil)
+	observer = NewWithClock(nil, noTimeouts)
 	if observer.now == nil {
-		t.Fatal("NewWithClock(nil) clock = nil")
+		t.Fatal("NewWithClock(nil, noTimeouts) clock = nil")
 	}
 	observer.Finish(Token{}, Result{})
 	if got := observer.Stats().ObservedRequests; got != 0 {
@@ -206,7 +210,7 @@ func TestObserverStatsMaintainAggregateRelationUnderConcurrency(t *testing.T) {
 
 	const workers = 128
 
-	observer := New()
+	observer := New(noTimeouts)
 	start := make(chan struct{})
 	done := make(chan struct{})
 	var wait sync.WaitGroup
@@ -258,7 +262,7 @@ func TestObserverProducesDeterministicTargetDiagnosis(t *testing.T) {
 
 	origin := time.Unix(5_000, 0)
 	clock := newObservationClock(origin)
-	observer := NewWithClock(clock.Now)
+	observer := NewWithClock(clock.Now, noTimeouts)
 	request := Request{
 		Context:  context.Background(),
 		Method:   "GET",
@@ -299,7 +303,7 @@ func TestObserverExcludesCallerCancellationFromReadiness(t *testing.T) {
 
 	origin := time.Unix(6_000, 0)
 	clock := newObservationClock(origin)
-	observer := NewWithClock(clock.Now)
+	observer := NewWithClock(clock.Now, noTimeouts)
 	requestContext, cancel := context.WithCancel(context.Background())
 	cancel()
 	request := Request{

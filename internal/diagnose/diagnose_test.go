@@ -479,6 +479,48 @@ func TestEvaluateSummarizesWindowEvidence(t *testing.T) {
 	}
 }
 
+func TestEvaluateCarriesLatencySummary(t *testing.T) {
+	t.Parallel()
+
+	latency := Latency{Samples: 120, Slowest: 250 * time.Millisecond}
+	ready := Window{
+		Attempts:          30,
+		RelevantAttempts:  30,
+		LatencySamples:    30,
+		FirstRelevantTick: int64(time.Second),
+		LastRelevantTick:  int64(45 * time.Second),
+		LastTick:          int64(45 * time.Second),
+	}
+	snapshots := map[string]Snapshot{
+		"cold":  {Now: int64(time.Second)},
+		"stale": {Now: int64(20 * time.Minute), EverRelevant: true},
+		"ready": {
+			Recent:          ready,
+			Now:             int64(45 * time.Second),
+			RecentExpiresAt: int64(2 * time.Minute),
+			EverRelevant:    true,
+		},
+	}
+
+	for name, snapshot := range snapshots {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			without := Evaluate(snapshot)
+			snapshot.Latency = latency
+			got := Evaluate(snapshot)
+			if got.Latency != latency {
+				t.Errorf("latency = %+v, want %+v", got.Latency, latency)
+			}
+
+			got.Latency = Latency{}
+			if got != without {
+				t.Errorf("result with latency = %+v, want %+v", got, without)
+			}
+		})
+	}
+}
+
 func TestSummarizeBoundsEvidenceSpan(t *testing.T) {
 	t.Parallel()
 

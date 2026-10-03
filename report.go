@@ -31,7 +31,8 @@ type Report struct {
 // Decision is one published evaluation of a target.
 //
 // A target without an evaluation has zero times, ReadinessCold, DiagnosisNone,
-// no reasons, zero evidence, no candidates, and a zero PolicyVersion.
+// no reasons, zero evidence and latency, no candidates, a zero Timeout, and a
+// zero PolicyVersion.
 type Decision struct {
 	// Target identifies the normalized dependency.
 	Target Target
@@ -55,6 +56,15 @@ type Decision struct {
 	// evaluation.
 	Historical Evidence
 
+	// Latency summarizes the latency samples the adaptive timeout was derived
+	// from.
+	Latency Latency
+
+	// Timeout is the adaptive timeout that Enforce applies to the target's
+	// read requests while the decision is current. It is non-zero exactly when
+	// Candidates has CandidateTimeout.
+	Timeout time.Duration
+
 	// PolicyVersion identifies the rules that selected Candidates.
 	PolicyVersion uint32
 
@@ -68,14 +78,17 @@ type Decision struct {
 	// applies CandidateRetry, subject to replay safety, the caller's deadline,
 	// and retry budgets. It applies CandidateBreakerOpen by opening the
 	// target's dependency breaker when a request fails because of the
-	// dependency.
+	// dependency. It applies CandidateTimeout by ending a read request that
+	// waits longer than Timeout for response headers.
 	Candidates Candidates
 }
 
 // Change is a retained evaluation that changed a target's candidates.
 //
-// A change is recorded when the candidate set changes, or when the same
-// non-empty set is selected for a different diagnosis. Renewing an unchanged
+// A change is recorded when the candidate set or the Timeout changes, or when
+// the same CandidateRetry or CandidateBreakerOpen selection is justified by a
+// different diagnosis. CandidateTimeout does not depend on the diagnosis, so a
+// new diagnosis with no other candidate is not a change. Renewing an unchanged
 // decision is not a change. Changes are not a target lifecycle log: target
 // eviction and evidence going stale are not recorded.
 type Change struct {
@@ -127,6 +140,24 @@ type Evidence struct {
 
 	// Span is the time between the first and last counted attempts.
 	Span time.Duration
+}
+
+// Latency summarizes the latency samples a target retains for its adaptive
+// timeout, from the recent window and the historical baseline, which together
+// cover about the last 30 minutes.
+//
+// Every initial attempt that returned a response is a sample of its time to
+// response headers. An attempt that the adaptive timeout ended is a sample at
+// the timeout. Samples are kept in fixed buckets, the slowest of which holds
+// everything above 30 seconds.
+type Latency struct {
+	// Samples is the number of retained samples.
+	Samples uint64
+
+	// Slowest is the upper bound of the bucket that holds the slowest retained
+	// sample. It is the largest Duration when that sample took longer than 30
+	// seconds, and zero without samples.
+	Slowest time.Duration
 }
 
 // MethodClass is a bounded class of HTTP request methods.
@@ -351,6 +382,13 @@ const (
 	// then fail fast with ErrBreakerOpen until a probe shows that the
 	// dependency answers again.
 	CandidateBreakerOpen
+
+	// CandidateTimeout marks a target whose retained latency evidence selects
+	// the adaptive timeout in Decision.Timeout. It does not depend on the
+	// diagnosis. Enforce mode applies it to read requests other than breaker
+	// probes, which fail with ErrTimeout when the base transport does not
+	// return response headers in time.
+	CandidateTimeout
 )
 
 // Has reports whether candidates contains every control in want. It reports
@@ -365,7 +403,7 @@ func (candidates Candidates) String() string {
 		return "None"
 	}
 
-	names := make([]string, 0, 3)
+	names := make([]string, 0, 4)
 	remaining := candidates
 	if remaining.Has(CandidateRetry) {
 		names = append(names, "Retry")
@@ -374,6 +412,10 @@ func (candidates Candidates) String() string {
 	if remaining.Has(CandidateBreakerOpen) {
 		names = append(names, "BreakerOpen")
 		remaining &^= CandidateBreakerOpen
+	}
+	if remaining.Has(CandidateTimeout) {
+		names = append(names, "Timeout")
+		remaining &^= CandidateTimeout
 	}
 	if remaining != 0 {
 		names = append(names, unknownName("Candidates", uint64(remaining)))
@@ -444,11 +486,16 @@ func newDecision(decision observe.Decision) Decision {
 			Port:   decision.Identity.Port,
 			Method: methodClassFrom(decision.Identity.Method),
 		},
-		EvaluatedAt:   decision.EvaluatedAt,
-		ExpiresAt:     decision.ExpiresAt,
-		Reasons:       reasonsFrom(result, decision.Plan.Reason),
-		Recent:        evidenceFrom(result.Recent),
-		Historical:    evidenceFrom(result.Historical),
+		EvaluatedAt: decision.EvaluatedAt,
+		ExpiresAt:   decision.ExpiresAt,
+		Reasons:     reasonsFrom(result, decision.Plan.Reason),
+		Recent:      evidenceFrom(result.Recent),
+		Historical:  evidenceFrom(result.Historical),
+		Latency: Latency{
+			Samples: result.Latency.Samples,
+			Slowest: result.Latency.Slowest,
+		},
+		Timeout:       decision.Plan.Timeout,
 		PolicyVersion: decision.Plan.Version,
 		Readiness:     readinessFrom(result.Readiness),
 		Diagnosis:     diagnosisFrom(result.Class),
@@ -566,6 +613,9 @@ func candidatesFrom(candidates policy.Candidate) Candidates {
 	}
 	if candidates&policy.CandidateBreakerOpen != 0 {
 		converted |= CandidateBreakerOpen
+	}
+	if candidates&policy.CandidateTimeout != 0 {
+		converted |= CandidateTimeout
 	}
 
 	return converted

@@ -42,7 +42,7 @@ type retryHarness struct {
 	mu        sync.Mutex
 }
 
-func newRetryHarness(t *testing.T) *retryHarness {
+func newRetryHarness(t *testing.T, options ...Option) *retryHarness {
 	t.Helper()
 
 	harness := &retryHarness{
@@ -53,11 +53,13 @@ func newRetryHarness(t *testing.T) *retryHarness {
 		t,
 		internalRoundTripperFunc(harness.roundTrip),
 		harness.clock.Now,
+		options...,
 	)
 	stages := newAdaptiveStages(
 		harness.transport.observer,
 		&harness.transport.retries,
 		&harness.transport.breakers,
+		&harness.transport.timeouts,
 		harness.transport.authorized,
 	)
 	stages.jitter = func() time.Duration { return retryTestDelay }

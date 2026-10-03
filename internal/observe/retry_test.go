@@ -14,7 +14,7 @@ func TestFinishReportsCompletion(t *testing.T) {
 	t.Parallel()
 
 	clock := newObservationClock(time.Unix(7_000, 0))
-	observer := NewWithClock(clock.Now)
+	observer := NewWithClock(clock.Now, noTimeouts)
 	request := testRequest("GET", "https", "api.example", "")
 	canceled, cancel := context.WithCancel(context.Background())
 	cancel()
@@ -81,7 +81,7 @@ func TestFinishFundsRetryBudgetsOnlyForRecordedRegularAttempts(t *testing.T) {
 	t.Parallel()
 
 	clock := newObservationClock(time.Unix(8_000, 0))
-	observer := NewWithClock(clock.Now)
+	observer := NewWithClock(clock.Now, noTimeouts)
 	request := testRequest("GET", "https", "api.example", "")
 
 	var regular Token
@@ -120,7 +120,7 @@ func TestReserveRetryRequiresLiveCurrentRetryPlan(t *testing.T) {
 
 	origin := time.Unix(9_000, 0)
 	clock := newObservationClock(origin)
-	observer := NewWithClock(clock.Now)
+	observer := NewWithClock(clock.Now, noTimeouts)
 	token := recordTransientTarget(t, observer, clock, "api.example")
 
 	if !observer.RetryPermitted(token) {
@@ -171,7 +171,7 @@ func TestReserveRetryRejectsTargetsWithoutRetryCandidate(t *testing.T) {
 	t.Parallel()
 
 	clock := newObservationClock(time.Unix(10_000, 0))
-	observer := NewWithClock(clock.Now)
+	observer := NewWithClock(clock.Now, noTimeouts)
 
 	warming := observer.Begin(testRequest("GET", "https", "warming.example", ""))
 	for range retry.DepositsPerToken {

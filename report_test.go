@@ -60,14 +60,20 @@ func TestReportPublishesNormalizedWarmingTarget(t *testing.T) {
 	if !slices.Equal(decision.Reasons, wantReasons) {
 		t.Errorf("Reasons = %v, want %v", decision.Reasons, wantReasons)
 	}
-	if decision.PolicyVersion != 2 {
-		t.Errorf("PolicyVersion = %d, want 2", decision.PolicyVersion)
+	if decision.PolicyVersion != 3 {
+		t.Errorf("PolicyVersion = %d, want 3", decision.PolicyVersion)
 	}
 	if decision.Recent != (curo.Evidence{Attempts: 1}) {
 		t.Errorf("Recent = %+v, want one attempt", decision.Recent)
 	}
 	if decision.Historical != (curo.Evidence{}) {
 		t.Errorf("Historical = %+v, want empty", decision.Historical)
+	}
+	if decision.Latency.Samples != 1 || decision.Latency.Slowest <= 0 {
+		t.Errorf("Latency = %+v, want one sample", decision.Latency)
+	}
+	if decision.Timeout != 0 {
+		t.Errorf("Timeout = %v, want 0", decision.Timeout)
 	}
 	if decision.EvaluatedAt.Before(before) ||
 		decision.ExpiresAt.Before(decision.EvaluatedAt) {
@@ -247,12 +253,17 @@ func TestReportValuesHaveStableNames(t *testing.T) {
 		{value: curo.Candidates(0), want: "None"},
 		{value: curo.CandidateRetry, want: "Retry"},
 		{value: curo.CandidateBreakerOpen, want: "BreakerOpen"},
+		{value: curo.CandidateTimeout, want: "Timeout"},
 		{
 			value: curo.CandidateRetry | curo.CandidateBreakerOpen,
 			want:  "Retry|BreakerOpen",
 		},
-		{value: curo.CandidateRetry | curo.Candidates(4), want: "Retry|Candidates(4)"},
-		{value: curo.Candidates(132), want: "Candidates(132)"},
+		{
+			value: curo.CandidateRetry | curo.CandidateBreakerOpen | curo.CandidateTimeout,
+			want:  "Retry|BreakerOpen|Timeout",
+		},
+		{value: curo.CandidateTimeout | curo.Candidates(8), want: "Timeout|Candidates(8)"},
+		{value: curo.Candidates(136), want: "Candidates(136)"},
 	}
 
 	for _, test := range tests {
@@ -275,6 +286,8 @@ func TestCandidatesHas(t *testing.T) {
 		{candidates: both, want: both, has: true},
 		{candidates: curo.CandidateRetry, want: curo.CandidateBreakerOpen},
 		{candidates: curo.CandidateRetry, want: both},
+		{candidates: both, want: curo.CandidateTimeout},
+		{candidates: both | curo.CandidateTimeout, want: curo.CandidateTimeout, has: true},
 		{candidates: both, want: 0},
 		{candidates: 0, want: 0},
 	}

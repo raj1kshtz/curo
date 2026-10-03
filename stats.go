@@ -6,7 +6,8 @@ package curo
 // errors. Fields are sampled independently while requests are in flight.
 // OverflowRequests never exceeds ObservedRequests, RetrySuccesses never
 // exceeds RetryAttempts, RetryAttempts plus RetryBudgetDenials never exceeds
-// ObservedRequests, and SelfDisabled implies at least three InternalFailures.
+// ObservedRequests, ShadowTimeouts never exceeds ObservedRequests, and
+// SelfDisabled implies at least three InternalFailures.
 type Stats struct {
 	// ObservedRequests is the number of completed initial attempts recorded in
 	// Observe or Enforce mode. Retry attempts and requests that failed fast
@@ -51,6 +52,16 @@ type Stats struct {
 	// ErrBreakerOpen without calling the base transport.
 	BreakerRejections uint64
 
+	// Timeouts is the number of attempts, including retry attempts, that
+	// Enforce ended with ErrTimeout because the base transport did not return
+	// response headers within the adaptive timeout.
+	Timeouts uint64
+
+	// ShadowTimeouts is the number of Observe initial attempts that took
+	// longer than the adaptive timeout Enforce would have applied to them.
+	// Observe never ends an attempt.
+	ShadowTimeouts uint64
+
 	// InternalFailures is the number of contained Curo-owned failures in
 	// request stages and Report.
 	InternalFailures uint64
@@ -74,6 +85,7 @@ func (t *Transport) Stats() Stats {
 	retrySuccesses := t.retries.successes.Load()
 	retryAttempts := t.retries.attempts.Load()
 	retryBudgetDenials := t.retries.budgetDenials.Load()
+	shadowTimeouts := t.timeouts.shadow.Load()
 	observation := t.observer.Stats()
 
 	return Stats{
@@ -86,6 +98,8 @@ func (t *Transport) Stats() Stats {
 		BreakerOpens:       t.breakers.opens.Load(),
 		BreakerProbes:      t.breakers.probes.Load(),
 		BreakerRejections:  t.breakers.rejections.Load(),
+		Timeouts:           t.timeouts.expired.Load(),
+		ShadowTimeouts:     shadowTimeouts,
 		InternalFailures:   internalFailures,
 		SelfDisabled:       selfDisabled,
 	}

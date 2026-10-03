@@ -122,6 +122,19 @@ type Window struct {
 	P95LatencyBucket   uint8
 }
 
+// Latency summarizes every retained latency sample of a target, including
+// samples that a dependency breaker fenced out of the recent window. No
+// diagnosis rule reads it; it is carried through for the adaptive timeout.
+type Latency struct {
+	// Samples is the number of retained latency samples.
+	Samples uint64
+
+	// Slowest is the upper bound of the fixed latency bucket that holds the
+	// slowest retained sample. It is the largest Duration when that sample
+	// exceeded every bucket, and zero without samples.
+	Slowest time.Duration
+}
+
 // Snapshot contains the recent and non-overlapping historical evidence used
 // by one deterministic evaluation.
 type Snapshot struct {
@@ -129,6 +142,7 @@ type Snapshot struct {
 	Historical      Window
 	Now             int64
 	RecentExpiresAt int64
+	Latency         Latency
 	EverRelevant    bool
 }
 
@@ -147,6 +161,7 @@ type Result struct {
 	Historical  Evidence
 	EvaluatedAt int64
 	ExpiresAt   int64
+	Latency     Latency
 	Readiness   Readiness
 	Class       Class
 	Reasons     [maxReasons]Reason
@@ -164,6 +179,7 @@ func Evaluate(snapshot Snapshot) Result {
 		Historical:  summarize(snapshot.Historical),
 		EvaluatedAt: snapshot.Now,
 		ExpiresAt:   saturatingAdd(snapshot.Now, int64(resultTTL)),
+		Latency:     snapshot.Latency,
 	}
 	if snapshot.Recent.RelevantAttempts > 0 {
 		result.ExpiresAt = minimum(

@@ -21,7 +21,7 @@ func TestObserverReportPublishesOrderedDetachedDecisions(t *testing.T) {
 	observer := NewWithClock(func() time.Time {
 		clockReads.Add(1)
 		return clock.Now()
-	})
+	}, noTimeouts)
 
 	finish := func(request Request, result Result) {
 		observer.Finish(observer.Begin(request), result)
@@ -130,7 +130,7 @@ func TestObserverReportHandlesEmptyObservers(t *testing.T) {
 	if report := (&Observer{}).Report(); report.Targets != nil || report.Changes != nil {
 		t.Errorf("zero observer report = %+v, want empty", report)
 	}
-	if report := New().Report(); report.Targets != nil || report.Changes != nil {
+	if report := New(noTimeouts).Report(); report.Targets != nil || report.Changes != nil {
 		t.Errorf("new observer report = %+v, want empty", report)
 	}
 }
@@ -138,7 +138,7 @@ func TestObserverReportHandlesEmptyObservers(t *testing.T) {
 func TestObserverReportSkipsTargetsRetiredDuringCollection(t *testing.T) {
 	t.Parallel()
 
-	observer := New()
+	observer := New(noTimeouts)
 	_ = observer.Begin(testRequest("GET", "https", "api.example", ""))
 	targets := observer.registry.regularTargets()
 	if len(targets) != 1 {
@@ -161,7 +161,7 @@ func TestObserverReportIsCoherentUnderConcurrentCompletion(t *testing.T) {
 	)
 
 	clock := newObservationClock(time.Unix(8_000, 0))
-	observer := NewWithClock(clock.Now)
+	observer := NewWithClock(clock.Now, noTimeouts)
 	start := make(chan struct{})
 	var wait sync.WaitGroup
 	wait.Add(writers + readers)

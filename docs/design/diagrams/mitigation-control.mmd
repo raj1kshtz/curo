@@ -38,8 +38,8 @@ flowchart TB
 
   subgraph timeout["Adaptive timeout control"]
     direction LR
-    to1["Ready latency evidence<br/>Bounded histogram"]:::analysis
-    to2["Timeout candidate<br/>Quantile and margin"]:::analysis
+    to1["Retained latency evidence<br/>At least 100 samples"]:::analysis
+    to2["Timeout candidate<br/>Slowest bucket times three"]:::analysis
     to3["Safety bounds<br/>Floor and ceiling"]:::safety
     to4["Caller deadline<br/>Never extend it"]:::api
     to5["Attempt context<br/>Curo timeout source tagged"]:::mitigation

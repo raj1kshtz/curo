@@ -4,13 +4,19 @@
 // This package never applies a control.
 package policy
 
-import "github.com/raj1kshtz/curo/internal/diagnose"
+import (
+	"time"
+
+	"github.com/raj1kshtz/curo/internal/diagnose"
+	"github.com/raj1kshtz/curo/internal/timeout"
+)
 
 // Version identifies the candidate rule set recorded with each Plan.
 //
 // Version 2 stopped selecting CandidateBreakerOpen for Saturation, which is
-// now reported without a candidate.
-const Version uint32 = 2
+// now reported without a candidate. Version 3 added CandidateTimeout, which
+// depends on retained latency evidence rather than on the diagnosis.
+const Version uint32 = 3
 
 // Candidate is a set of controls eligible for later enforcement.
 type Candidate uint8
@@ -23,6 +29,10 @@ const (
 	// CandidateBreakerOpen marks a dependency outage as eligible for opening
 	// the target's dependency breaker.
 	CandidateBreakerOpen
+
+	// CandidateTimeout marks a target whose retained latency evidence
+	// selects an adaptive timeout, held in Plan.Timeout.
+	CandidateTimeout
 )
 
 // Reason explains a policy outcome that diagnosis reasons do not cover.
@@ -39,20 +49,34 @@ const (
 
 // Plan is an immutable, expiring set of control candidates.
 type Plan struct {
-	ExpiresAt  int64
+	ExpiresAt int64
+
+	// Timeout is the adaptive timeout selected with CandidateTimeout, and
+	// zero without it.
+	Timeout    time.Duration
 	Version    uint32
 	Candidates Candidate
 	Reason     Reason
 }
 
-// Evaluate applies the closed diagnosis-to-candidate rules.
+// Evaluate applies the closed candidate rules.
 //
-// Only Ready diagnoses produce candidates. Plans expire with the diagnosis
-// they were derived from.
-func Evaluate(result diagnose.Result) Plan {
+// Only Ready diagnoses produce diagnosis candidates. CandidateTimeout is
+// independent of the diagnosis and its readiness: it is selected whenever
+// timeout.Select chooses a timeout from the result's latency summary within
+// bounds. Plans expire with the diagnosis they were derived from.
+func Evaluate(result diagnose.Result, bounds timeout.Bounds) Plan {
 	plan := Plan{
 		ExpiresAt: result.ExpiresAt,
 		Version:   Version,
+	}
+	if limit := timeout.Select(
+		result.Latency.Samples,
+		result.Latency.Slowest,
+		bounds,
+	); limit > 0 {
+		plan.Candidates = CandidateTimeout
+		plan.Timeout = limit
 	}
 
 	candidates := candidatesFor(result.Class)
@@ -64,7 +88,7 @@ func Evaluate(result diagnose.Result) Plan {
 		return plan
 	}
 
-	plan.Candidates = candidates
+	plan.Candidates |= candidates
 	return plan
 }
 

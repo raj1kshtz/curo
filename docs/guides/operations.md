@@ -3,13 +3,13 @@
 This guide explains how to run Curo in a service. It covers wiring Curo,
 bounding requests, choosing timeout bounds, rolling out `Enforce`,
 monitoring, handling Curo's errors, and what to expect when a dependency
-fails. The [README](../../README.md#current-api) describes each mechanism in
-detail, and the [engine design](../design/engine.md) explains the reasons
-behind it.
+fails. The [behavior reference](../reference/behavior.md) describes each
+mechanism in detail, and the [engine design](../design/engine.md) explains
+the reasons behind it.
 
-Curo is pre-alpha. Only the operating mode and the timeout bounds are
-configurable, and every other threshold is fixed. This guide therefore
-explains what the thresholds mean in operation rather than how to tune them.
+Only the operating mode and the timeout bounds are configurable, and every
+other threshold is fixed. This guide therefore explains what the thresholds
+mean in operation rather than how to tune them.
 
 Measured numbers come from the deterministic failure simulation, whose
 scorecard is [`testdata/simulation.golden`](../../testdata/simulation.golden).
@@ -359,7 +359,7 @@ Low-volume dependencies get fewer actions:
 | A breaker took about a minute to open | Expected: failures must make up half of the two-minute window. |
 | `Report` shows `Degrading` right after a breaker closes | Evidence is thin right after the close, so the comparison with history can briefly flag it. `Degrading` selects no retry or breaker, though an adaptive timeout may stay active. |
 | A dependency gets no retries or breaker | The transport is not in `Enforce`, was closed, or self-disabled; the target is not `Ready` because of low traffic or a restart; or the target is in overflow. Check the decision's `Readiness` and `Reasons`. |
-| A failed request was not retried | Curo retries only replay-safe reads after a transport error, or a 502, 503, or 504 without `Retry-After`, when the target's decision holds `CandidateRetry`, the deadline leaves room, and both budgets hold a token. The [README](../../README.md#current-api) lists every condition. |
+| A failed request was not retried | Curo retries only replay-safe reads after a transport error, or a 502, 503, or 504 without `Retry-After`, when the target's decision holds `CandidateRetry`, the deadline leaves room, and both budgets hold a token. The [behavior reference](../reference/behavior.md#retries) lists every condition. |
 | Curo stopped acting | `SelfDisabled` is true, the transport was closed, or the mode changed. |
 | `OverflowRequests` keeps growing | The transport sees more than 128 targets, or requests with an invalid scheme, host, or port. Move user-supplied URLs to their own transport. |
 | Reads fail with `ErrTimeout` after a slowdown | The first cut raises the timeout for later reads, up to the ceiling, but reads already in flight keep the timeout they started with. Raise the floor if slow periods are expected, or the ceiling if legitimate reads take longer than it. |
@@ -376,6 +376,11 @@ Low-volume dependencies get fewer actions:
 - Curo never times breaker probes, and a probe is a real application
   request, which may be a write.
 - The mode applies to a whole transport.
+- Curo does not log its own failures yet, although
+  [ADR-0002](../adr/0002-host-application-inviolability.md) calls for a
+  structured logger. `InternalFailures` and `SelfDisabled` in `Stats` are
+  the only signals.
 
-The [README](../../README.md#current-api) lists the detailed limits of the
-breaker and the adaptive timeout.
+The behavior reference lists the detailed limits of
+[dependency breakers](../reference/behavior.md#dependency-breakers) and
+[adaptive timeouts](../reference/behavior.md#adaptive-timeouts).

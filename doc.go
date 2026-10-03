@@ -1,24 +1,57 @@
-// Package curo provides an explicit HTTP transport wrapper for adaptive
-// resilience.
+// Package curo adds adaptive resilience to outbound HTTP calls.
 //
-// The current implementation provides transparent delegation, operating-mode
-// control, lifecycle semantics, bounded request observation, aggregate runtime
-// statistics, deterministic diagnosis, control-candidate evaluation, a
-// pull-based decision report, and guarded request stages. In Enforce mode it
-// applies all three control candidates. A replay-safe request whose initial
-// attempt failed with a transport error or a 502, 503, or 504 response may be
-// retried once within aggregate retry budgets. When a target is diagnosed as
-// down, a dependency failure opens its dependency breaker: requests to the
-// target then fail fast with ErrBreakerOpen, and after a cooldown one request
-// at a time probes whether the dependency recovered. A read request to a
-// target with enough latency evidence fails with ErrTimeout when response
-// headers do not arrive within the target's adaptive timeout, which stays
-// within the bounds set by WithTimeoutBounds and never extends the caller's
-// deadline.
+// A [Transport] is an [http.RoundTripper] that wraps a base transport, such
+// as [http.DefaultTransport]. It observes the requests sent through it, learns
+// how each dependency behaves, and in [Enforce] mode applies three controls
+// that need no tuning:
 //
-// The [operations guide] explains how to bound requests, choose timeout
-// bounds, roll out Enforce, monitor a Transport, and what to expect when a
-// dependency fails.
+//   - a retry of a replay-safe read that failed transiently, within budgets
+//     that allow about one retry per ten requests;
+//   - a dependency breaker that fails requests fast with [ErrBreakerOpen]
+//     once a dependency is diagnosed as down; and
+//   - an adaptive timeout that ends a read with [ErrTimeout] when its
+//     response headers take too long.
+//
+// Wrap the base transport once, share the client, and close the Transport
+// when the application shuts down:
+//
+//	transport, err := curo.New(http.DefaultTransport)
+//	if err != nil {
+//		return err
+//	}
+//	client := &http.Client{Transport: transport, Timeout: time.Minute}
+//
+// # Modes
+//
+// A new Transport starts in [Observe]: it sends every request unchanged and
+// reports what it would do. [Enforce] applies the controls, and [Off] passes
+// requests straight to the base transport. [Transport.SetMode] changes the
+// mode at runtime, so a rollback needs no deploy. Only the mode and the
+// timeout bounds, set with [WithTimeoutBounds], are configurable.
+//
+// # Errors
+//
+// [http.Client] wraps the errors that Curo returns in a [*url.Error], so
+// match them with [errors.Is]. [ErrTimeout] also matches
+// [context.DeadlineExceeded], so check it first.
+//
+// # Visibility
+//
+// [Transport.Stats] returns aggregate counters, and [Transport.Report]
+// returns each dependency's latest decision with its evidence and reasons.
+// Both encode to JSON.
+//
+// # Safety
+//
+// Curo runs inside the application it protects. A failure inside Curo never
+// fails a request, and repeated failures make the Transport pass requests
+// straight through. Curo never retries a request that is not replay-safe,
+// never extends a caller's deadline, and keeps its state bounded however
+// many hosts the application calls.
+//
+// The [operations guide] explains how to run Curo in a service, and the
+// [behavior reference] describes each mechanism in detail.
 //
 // [operations guide]: https://github.com/raj1kshtz/curo/blob/main/docs/guides/operations.md
+// [behavior reference]: https://github.com/raj1kshtz/curo/blob/main/docs/reference/behavior.md
 package curo

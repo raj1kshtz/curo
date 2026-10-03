@@ -103,6 +103,10 @@ most recent Go releases.
   instructions live in
   [`docs/design/diagrams/README.md`](../docs/design/diagrams/README.md).
 - Update related ADRs and the changelog in the same pull request.
+- Update the [behavior reference](../docs/reference/behavior.md) when a
+  mechanism's behavior changes, and the
+  [operations guide](../docs/guides/operations.md) when the advice for
+  running Curo changes.
 
 ## Commits
 

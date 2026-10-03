@@ -2,11 +2,16 @@
 
 ## Supported versions
 
-Curo has not published a release. Security reports against the current
-repository are welcome while the implementation is under development.
+Security fixes are released for the latest minor version, as patch releases.
 
-After releases begin, the latest released minor version will receive security
-fixes until a broader support policy is published.
+| Version | Supported |
+| --- | --- |
+| 0.1.x | Yes |
+| Commits before `v0.1.0` | No |
+
+Upgrade to the latest patch release to receive fixes.
+[ADR-0010](../docs/adr/0010-versioning-and-compatibility.md) describes the
+release and compatibility policy.
 
 ## Reporting a vulnerability
 

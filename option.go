@@ -45,7 +45,11 @@ func WithMode(mode Mode) Option {
 // times its slowest retained latency, clamped to these bounds. Reading the
 // response body is not bounded. Set the ceiling above the longest time to
 // response headers that a read may legitimately take, because no read may
-// wait longer.
+// wait longer. Also set it below the deadlines that callers put on those
+// reads: a read is timed only when its deadline leaves more time than its
+// timeout, and only a timeout at the ceiling counts as a dependency failure.
+// A read that its caller's deadline ends is never a dependency failure, even
+// when the dependency hangs.
 //
 // Passing zero for both disables adaptive timeouts. Otherwise minimum must be
 // positive and must not exceed maximum.

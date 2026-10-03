@@ -85,6 +85,11 @@ changes will always be listed here under **Changed** or **Removed**.
   request paths; benchmarks for retry budgets, registry lookups, and
   concurrent observation; and CI checks for full statement coverage and a
   single run of every benchmark.
+- Operations guide covering transport wiring, request deadlines, timeout
+  bounds, rollout and rollback, monitoring, error handling, measured incident
+  behavior, warm-up, capacity, and troubleshooting.
+- Runnable examples for exporting `Stats` through `expvar`, handling
+  `ErrBreakerOpen` and `ErrTimeout`, and changing modes at runtime.
 
 ### Changed
 
@@ -103,5 +108,6 @@ changes will always be listed here under **Changed** or **Removed**.
   a minute just before the recent window began were briefly in neither the
   recent window nor the historical baseline, so a target's timeout could drop
   for about a minute and then rise again.
+- The `Enforce` documentation now lists adaptive timeouts among its actions.
 
 [Unreleased]: https://github.com/raj1kshtz/curo/commits/main

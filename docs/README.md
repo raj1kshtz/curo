@@ -6,6 +6,7 @@ Curo documentation is organized by purpose:
 | --- | --- |
 | [Architecture decisions](adr/README.md) | Accepted decisions, alternatives, and review process |
 | [Engine design](design/engine.md) | Runtime architecture, safety boundaries, state, and mitigation design |
+| [Operations guide](guides/operations.md) | Wiring, deadlines, timeout bounds, rollout, monitoring, error handling, and incident behavior |
 | [Project governance](project/governance.md) | Current decision-making and release process |
 | [Maintainers](project/maintainers.md) | Current project maintainers |
 

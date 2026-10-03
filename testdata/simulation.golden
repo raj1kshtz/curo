@@ -1,0 +1,312 @@
+# Curo simulation scorecards. Every run of a scenario takes the same steps,
+# so this file only changes when Curo's behavior changes. Review the diff, then
+# regenerate it with: go test -run '^TestSimulation$' -update .
+#
+# Times are virtual and rounded to the millisecond. Callers give up after 1m0s.
+# A false rejection or cut hit a request that would have succeeded without
+# Curo. Load is attempts per request; fault load counts requests that arrived
+# during a fault. Baseline values describe the same requests without Curo.
+# Decisions are sampled every second and once after the last request, so a
+# decision that changes back within a second is not listed.
+
+== steady: healthy dependency with a latency tail up to 1.5s
+read: requests=9000 attempts=9000 load=1.000 fault_load=-
+  ok=9000 baseline_ok=9000 rejected=0 false_rejected=0 cut=0 false_cut=0 retried=0
+  wait mean=57ms p50=51ms p99=350ms max=1.499s
+  baseline wait mean=57ms p50=51ms p99=350ms max=1.499s
+stats: retries=0 retry_ok=0 denied=0 opens=0 probes=0 rejections=0 timeouts=0 internal=0
+state: tracked=1 overflow=0 decisions=1 changes=2 peak_in_flight=3 baseline_peak_in_flight=3
+breaker: none
+decisions:
+  212ms api.example Read None candidates=None timeout=0s
+  20.452s api.example Read None candidates=Timeout timeout=2s
+  30.636s api.example Read Healthy candidates=Timeout timeout=2s
+  7m40.889s api.example Read Healthy candidates=Timeout timeout=7.5s
+observe: shadow_timeouts=0 changes=2
+
+== latency-step: answers take 8 to 9s for 5 minutes
+read: requests=7500 attempts=7500 load=1.000 fault_load=1.000
+  ok=7462 baseline_ok=7500 rejected=0 false_rejected=0 cut=38 false_cut=38 retried=0
+  wait mean=1.739s p50=58ms p99=8.948s max=8.999s
+  baseline wait mean=1.744s p50=58ms p99=8.949s max=8.999s
+fault 10m0s-15m0s: detection=- recovery=64ms
+stats: retries=0 retry_ok=0 denied=0 opens=0 probes=0 rejections=0 timeouts=38 internal=0
+state: tracked=1 overflow=0 decisions=1 changes=3 peak_in_flight=45 baseline_peak_in_flight=45
+breaker: none
+decisions:
+  212ms api.example Read None candidates=None timeout=0s
+  20.452s api.example Read None candidates=Timeout timeout=2s
+  30.636s api.example Read Healthy candidates=Timeout timeout=2s
+  7m40.889s api.example Read Healthy candidates=Timeout timeout=7.5s
+  10m7.5s api.example Read Healthy candidates=Timeout timeout=30s
+observe: shadow_timeouts=43 changes=3
+
+== intermittent: 5% of attempts fail with a connection reset for 10 minutes
+read: requests=6000 attempts=6162 load=1.027 fault_load=1.054
+  ok=5993 baseline_ok=5836 rejected=0 false_rejected=0 cut=0 false_cut=0 retried=162
+  wait mean=47ms p50=35ms p99=212ms max=1.481s
+  baseline wait mean=44ms p50=34ms p99=212ms max=1.481s
+write: requests=1200 attempts=1200 load=1.000 fault_load=1.000
+  ok=1177 baseline_ok=1177 rejected=0 false_rejected=0 cut=0 false_cut=0 retried=0
+  wait mean=41ms p50=34ms p99=113ms max=380ms
+  baseline wait mean=41ms p50=34ms p99=113ms max=380ms
+fault 5m0s-15m0s: detection=- recovery=44ms
+stats: retries=162 retry_ok=157 denied=0 opens=0 probes=0 rejections=0 timeouts=0 internal=0
+state: tracked=2 overflow=0 decisions=2 changes=6 peak_in_flight=3 baseline_peak_in_flight=3
+breaker: none
+decisions:
+  38ms api.example Write None candidates=None timeout=0s
+  212ms api.example Read None candidates=None timeout=0s
+  20.44s api.example Read None candidates=Timeout timeout=2s
+  30.656s api.example Read Healthy candidates=Timeout timeout=2s
+  32.04s api.example Write Healthy candidates=None timeout=0s
+  5m10.023s api.example Read Transient candidates=Retry|Timeout timeout=2s
+  5m20.027s api.example Write Transient candidates=Retry timeout=0s
+  6m27.685s api.example Read Transient candidates=Retry|Timeout timeout=7.5s
+  16m50.073s api.example Write Healthy candidates=None timeout=0s
+  16m50.079s api.example Read Healthy candidates=Timeout timeout=7.5s
+observe: shadow_timeouts=0 changes=6
+
+== outage: every attempt gets 503 for 3 minutes
+read: requests=6000 attempts=5364 load=0.894 fault_load=0.382
+  ok=5020 baseline_ok=5100 rejected=675 false_rejected=80 cut=0 false_cut=0 retried=39
+  wait mean=49ms p50=45ms p99=305ms max=1.43s
+  baseline wait mean=50ms p50=45ms p99=310ms max=1.43s
+write: requests=1200 attempts=1065 load=0.887 fault_load=0.361
+  ok=1000 baseline_ok=1020 rejected=135 false_rejected=20 cut=0 false_cut=0 retried=0
+  wait mean=45ms p50=43ms p99=247ms max=419ms
+  baseline wait mean=46ms p50=44ms p99=247ms max=419ms
+fault 10m0s-13m0s: detection=1m0.006s recovery=16.08s
+stats: retries=39 retry_ok=0 denied=261 opens=2 probes=10 rejections=810 timeouts=0 internal=0
+state: tracked=2 overflow=0 decisions=2 changes=8 peak_in_flight=3 baseline_peak_in_flight=3
+breaker:
+  11m0.006s open api.example GET
+  11m0.007s open api.example POST
+  11m5.2s probe api.example GET -> 503 after 9ms
+  11m6s probe api.example POST -> 503 after 6ms
+  11m15.4s probe api.example GET -> 503 after 8ms
+  11m17s probe api.example POST -> 503 after 7ms
+  11m35.6s probe api.example GET -> 503 after 8ms
+  11m38s probe api.example POST -> 503 after 10ms
+  12m15.8s probe api.example GET -> 503 after 10ms
+  12m19s probe api.example POST -> 503 after 8ms
+  13m16s probe api.example GET -> 200 after 80ms
+  13m20s probe api.example POST -> 200 after 69ms
+decisions:
+  38ms api.example Write None candidates=None timeout=0s
+  212ms api.example Read None candidates=None timeout=0s
+  20.44s api.example Read None candidates=Timeout timeout=2s
+  30.656s api.example Read Healthy candidates=Timeout timeout=2s
+  32.04s api.example Write Healthy candidates=None timeout=0s
+  6m24.089s api.example Read Healthy candidates=Timeout timeout=7.5s
+  10m0.007s api.example Read Transient candidates=Retry|Timeout timeout=7.5s
+  10m0.01s api.example Write Transient candidates=Retry timeout=0s
+  11m0.006s api.example Read DependencyDown candidates=BreakerOpen|Timeout timeout=7.5s
+  11m0.007s api.example Write DependencyDown candidates=BreakerOpen timeout=0s
+  13m16.867s api.example Read None candidates=Timeout timeout=7.5s
+  13m20.069s api.example Write None candidates=None timeout=0s
+  13m30.063s api.example Read Degrading candidates=Timeout timeout=7.5s
+  13m40.074s api.example Read Healthy candidates=Timeout timeout=7.5s
+  13m41.079s api.example Write Healthy candidates=None timeout=0s
+observe: shadow_timeouts=0 changes=12
+
+== rate-limit: 30% of attempts get 429 with Retry-After for 5 minutes
+read: requests=6000 attempts=6000 load=1.000 fault_load=1.000
+  ok=5572 baseline_ok=5572 rejected=0 false_rejected=0 cut=0 false_cut=0 retried=0
+  wait mean=49ms p50=41ms p99=294ms max=1.445s
+  baseline wait mean=49ms p50=41ms p99=294ms max=1.445s
+fault 10m0s-15m0s: detection=- recovery=64ms
+stats: retries=0 retry_ok=0 denied=0 opens=0 probes=0 rejections=0 timeouts=0 internal=0
+state: tracked=1 overflow=0 decisions=1 changes=2 peak_in_flight=3 baseline_peak_in_flight=3
+breaker: none
+decisions:
+  212ms api.example Read None candidates=None timeout=0s
+  20.452s api.example Read None candidates=Timeout timeout=2s
+  30.636s api.example Read Healthy candidates=Timeout timeout=2s
+  7m40.889s api.example Read Healthy candidates=Timeout timeout=7.5s
+  11m30.005s api.example Read Saturation candidates=Timeout timeout=7.5s
+  15m40.213s api.example Read Healthy candidates=Timeout timeout=7.5s
+observe: shadow_timeouts=0 changes=2
+
+== probing: every attempt gets a connection reset for 5 minutes, and again for 2 minutes from 45s after recovery
+read: requests=7500 attempts=5678 load=0.757 fault_load=0.233
+  ok=5188 baseline_ok=5400 rejected=1875 false_rejected=212 cut=0 false_cut=0 retried=53
+  wait mean=40ms p50=37ms p99=269ms max=1.41s
+  baseline wait mean=41ms p50=38ms p99=284ms max=1.41s
+fault 10m0s-15m0s: detection=1m0.001s recovery=16.434s
+fault 15m45s-17m45s: detection=25.601s recovery=26.045s
+stats: retries=53 retry_ok=0 denied=297 opens=2 probes=9 rejections=1875 timeouts=0 internal=0
+state: tracked=1 overflow=0 decisions=1 changes=10 peak_in_flight=3 baseline_peak_in_flight=3
+breaker:
+  11m0.001s open api.example GET
+  11m5.2s probe api.example GET -> reset after 1ms
+  11m15.4s probe api.example GET -> reset after 1ms
+  11m35.6s probe api.example GET -> reset after 1ms
+  12m15.8s probe api.example GET -> reset after 1ms
+  13m16s probe api.example GET -> reset after 1ms
+  14m16.2s probe api.example GET -> reset after 1ms
+  15m16.4s probe api.example GET -> 200 after 34ms
+  16m10.601s open api.example GET
+  17m10.8s probe api.example GET -> reset after 1ms
+  18m11s probe api.example GET -> 200 after 45ms
+decisions:
+  212ms api.example Read None candidates=None timeout=0s
+  20.452s api.example Read None candidates=Timeout timeout=2s
+  30.636s api.example Read Healthy candidates=Timeout timeout=2s
+  7m40.889s api.example Read Healthy candidates=Timeout timeout=7.5s
+  10m0.001s api.example Read Transient candidates=Retry|Timeout timeout=7.5s
+  11m0.001s api.example Read DependencyDown candidates=BreakerOpen|Timeout timeout=7.5s
+  13m16.001s api.example Read Transient candidates=Retry|Timeout timeout=7.5s
+  15m16.821s api.example Read None candidates=Timeout timeout=7.5s
+  15m30.249s api.example Read Healthy candidates=Timeout timeout=7.5s
+  15m50.601s api.example Read Transient candidates=Retry|Timeout timeout=7.5s
+  16m0.601s api.example Read Degrading candidates=Timeout timeout=7.5s
+  16m10.601s api.example Read DependencyDown candidates=BreakerOpen|Timeout timeout=7.5s
+  18m11.823s api.example Read None candidates=Timeout timeout=7.5s
+  18m30.275s api.example Read Healthy candidates=Timeout timeout=7.5s
+observe: shadow_timeouts=0 changes=6
+
+== hang: the dependency stops answering for 5 minutes
+read: requests=7500 attempts=6229 load=0.830 fault_load=0.269
+  ok=5825 baseline_ok=6000 rejected=1271 false_rejected=175 cut=400 false_cut=0 retried=0
+  wait mean=1.563s p50=46ms p99=30s max=1m0s
+  baseline wait mean=12.046s p50=58ms p99=1m0s max=1m0s
+fault 10m0s-15m0s: detection=1m20s recovery=35.025s
+stats: retries=0 retry_ok=0 denied=0 opens=1 probes=5 rejections=1271 timeouts=400 internal=0
+state: tracked=1 overflow=0 decisions=1 changes=6 peak_in_flight=150 baseline_peak_in_flight=300
+breaker:
+  11m20s open api.example GET
+  11m25s probe api.example GET -> abandoned after 1m0s
+  12m5s probe api.example GET -> abandoned after 1m0s
+  12m55s probe api.example GET -> abandoned after 1m0s
+  14m5s probe api.example GET -> abandoned after 1m0s
+  15m35s probe api.example GET -> 200 after 25ms
+decisions:
+  212ms api.example Read None candidates=None timeout=0s
+  20.452s api.example Read None candidates=Timeout timeout=2s
+  30.636s api.example Read Healthy candidates=Timeout timeout=2s
+  7m40.889s api.example Read Healthy candidates=Timeout timeout=7.5s
+  10m7.5s api.example Read Healthy candidates=Timeout timeout=30s
+  10m37.6s api.example Read Transient candidates=Retry|Timeout timeout=30s
+  11m20s api.example Read DependencyDown candidates=BreakerOpen|Timeout timeout=30s
+  15m35.876s api.example Read None candidates=Timeout timeout=30s
+  15m50.239s api.example Read Healthy candidates=Timeout timeout=30s
+observe: shadow_timeouts=1500 changes=2
+
+== cardinality: 12,000 distinct hosts beside a dependency that gets 503 for 3 minutes
+read: requests=6000 attempts=5364 load=0.894 fault_load=0.382
+  ok=5020 baseline_ok=5100 rejected=675 false_rejected=80 cut=0 false_cut=0 retried=39
+  wait mean=48ms p50=45ms p99=304ms max=1.193s
+  baseline wait mean=49ms p50=46ms p99=305ms max=1.193s
+scan: requests=12000 attempts=12000 load=1.000 fault_load=1.000
+  ok=12000 baseline_ok=12000 rejected=0 false_rejected=0 cut=0 false_cut=0 retried=0
+  wait mean=57ms p50=51ms p99=347ms max=1.499s
+  baseline wait mean=57ms p50=51ms p99=347ms max=1.499s
+fault 10m0s-13m0s: detection=1m0.007s recovery=64ms
+stats: retries=39 retry_ok=0 denied=261 opens=1 probes=5 rejections=675 timeouts=0 internal=0
+state: tracked=128 overflow=11746 decisions=128 changes=5 peak_in_flight=5 baseline_peak_in_flight=5
+breaker:
+  11m0.007s open api.example GET
+  11m5.2s probe api.example GET -> 503 after 8ms
+  11m15.4s probe api.example GET -> 503 after 7ms
+  11m35.6s probe api.example GET -> 503 after 7ms
+  12m15.8s probe api.example GET -> 503 after 8ms
+  13m16s probe api.example GET -> 200 after 47ms
+decisions:
+  212ms api.example Read None candidates=None timeout=0s
+  20.273s api.example Read None candidates=Timeout timeout=2s
+  30.456s api.example Read Healthy candidates=Timeout timeout=2s
+  4m33.217s api.example Read Healthy candidates=Timeout timeout=7.5s
+  10m0.008s api.example Read Transient candidates=Retry|Timeout timeout=7.5s
+  11m0.007s api.example Read DependencyDown candidates=BreakerOpen|Timeout timeout=7.5s
+  13m16.838s api.example Read None candidates=Timeout timeout=7.5s
+  13m30.074s api.example Read Healthy candidates=Timeout timeout=7.5s
+observe: shadow_timeouts=0 changes=7
+
+== simultaneous: 10 of 20 dependencies get 503 for the same 3 minutes
+failing: requests=24000 attempts=21510 load=0.896 fault_load=0.405
+  ok=20050 baseline_ok=20400 rejected=2700 false_rejected=350 cut=0 false_cut=0 retried=210
+  wait mean=48ms p50=45ms p99=294ms max=1.499s
+  baseline wait mean=49ms p50=45ms p99=296ms max=1.499s
+healthy: requests=24000 attempts=24000 load=1.000 fault_load=1.000
+  ok=24000 baseline_ok=24000 rejected=0 false_rejected=0 cut=0 false_cut=0 retried=0
+  wait mean=56ms p50=51ms p99=329ms max=1.479s
+  baseline wait mean=56ms p50=51ms p99=329ms max=1.479s
+fault 10m0s-13m0s: detection=1m0.008s recovery=39ms
+stats: retries=210 retry_ok=0 denied=989 opens=10 probes=50 rejections=2700 timeouts=0 internal=0
+state: tracked=20 overflow=0 decisions=20 changes=70 peak_in_flight=8 baseline_peak_in_flight=8
+breaker:
+  11m0.008s open svc-01.example GET
+  11m0.06s open svc-02.example GET
+  11m0.108s open svc-03.example GET
+  11m0.159s open svc-04.example GET
+  11m0.207s open svc-05.example GET
+  11m0.257s open svc-06.example GET
+  11m0.306s open svc-07.example GET
+  11m0.357s open svc-08.example GET
+  11m0.407s open svc-09.example GET
+  11m0.459s open svc-10.example GET
+  11m5.5s probe svc-01.example GET -> 503 after 10ms
+  11m5.55s probe svc-02.example GET -> 503 after 7ms
+  11m5.6s probe svc-03.example GET -> 503 after 6ms
+  11m5.65s probe svc-04.example GET -> 503 after 9ms
+  11m5.7s probe svc-05.example GET -> 503 after 8ms
+  11m5.75s probe svc-06.example GET -> 503 after 10ms
+  11m5.8s probe svc-07.example GET -> 503 after 7ms
+  11m5.85s probe svc-08.example GET -> 503 after 9ms
+  11m5.9s probe svc-09.example GET -> 503 after 6ms
+  11m5.95s probe svc-10.example GET -> 503 after 6ms
+  11m16s probe svc-01.example GET -> 503 after 10ms
+  11m16.05s probe svc-02.example GET -> 503 after 8ms
+  11m16.1s probe svc-03.example GET -> 503 after 5ms
+  11m16.15s probe svc-04.example GET -> 503 after 9ms
+  11m16.2s probe svc-05.example GET -> 503 after 5ms
+  11m16.25s probe svc-06.example GET -> 503 after 6ms
+  11m16.3s probe svc-07.example GET -> 503 after 8ms
+  11m16.35s probe svc-08.example GET -> 503 after 10ms
+  11m16.4s probe svc-09.example GET -> 503 after 6ms
+  11m16.45s probe svc-10.example GET -> 503 after 8ms
+  11m36.5s probe svc-01.example GET -> 503 after 8ms
+  11m36.55s probe svc-02.example GET -> 503 after 7ms
+  11m36.6s probe svc-03.example GET -> 503 after 9ms
+  11m36.65s probe svc-04.example GET -> 503 after 5ms
+  11m36.7s probe svc-05.example GET -> 503 after 9ms
+  11m36.75s probe svc-06.example GET -> 503 after 8ms
+  11m36.8s probe svc-07.example GET -> 503 after 5ms
+  11m36.85s probe svc-08.example GET -> 503 after 9ms
+  11m36.9s probe svc-09.example GET -> 503 after 9ms
+  11m36.95s probe svc-10.example GET -> 503 after 10ms
+  12m17s probe svc-01.example GET -> 503 after 9ms
+  12m17.05s probe svc-02.example GET -> 503 after 7ms
+  12m17.1s probe svc-03.example GET -> 503 after 6ms
+  12m17.15s probe svc-04.example GET -> 503 after 6ms
+  12m17.2s probe svc-05.example GET -> 503 after 8ms
+  12m17.25s probe svc-06.example GET -> 503 after 6ms
+  12m17.3s probe svc-07.example GET -> 503 after 6ms
+  12m17.35s probe svc-08.example GET -> 503 after 5ms
+  12m17.4s probe svc-09.example GET -> 503 after 6ms
+  12m17.45s probe svc-10.example GET -> 503 after 6ms
+  13m17.5s probe svc-01.example GET -> 200 after 69ms
+  13m17.55s probe svc-02.example GET -> 200 after 37ms
+  13m17.6s probe svc-03.example GET -> 200 after 50ms
+  13m17.65s probe svc-04.example GET -> 200 after 27ms
+  13m17.7s probe svc-05.example GET -> 200 after 32ms
+  13m17.75s probe svc-06.example GET -> 200 after 49ms
+  13m17.8s probe svc-07.example GET -> 200 after 36ms
+  13m17.85s probe svc-08.example GET -> 200 after 71ms
+  13m17.9s probe svc-09.example GET -> 200 after 45ms
+  13m17.95s probe svc-10.example GET -> 200 after 29ms
+decisions:
+  38ms svc-11.example Read None candidates=None timeout=0s
+  212ms svc-01.example Read None candidates=None timeout=0s
+  30.575s svc-11.example Read Healthy candidates=None timeout=0s
+  31.07s svc-01.example Read Healthy candidates=None timeout=0s
+  51.071s svc-11.example Read Healthy candidates=Timeout timeout=2s
+  52.031s svc-01.example Read Healthy candidates=Timeout timeout=2s
+  1m7.796s svc-01.example Read Healthy candidates=Timeout timeout=7.5s
+  2m12.719s svc-11.example Read Healthy candidates=Timeout timeout=7.5s
+  10m0.009s svc-01.example Read Transient candidates=Retry|Timeout timeout=7.5s
+  11m0.008s svc-01.example Read DependencyDown candidates=BreakerOpen|Timeout timeout=7.5s
+  13m17.569s svc-01.example Read None candidates=Timeout timeout=7.5s
+  13m30.542s svc-01.example Read Healthy candidates=Timeout timeout=7.5s
+observe: shadow_timeouts=0 changes=90

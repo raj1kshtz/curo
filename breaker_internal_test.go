@@ -548,48 +548,7 @@ func TestHTTPClientSeesErrBreakerOpen(t *testing.T) {
 }
 
 func BenchmarkBreakerRejection(b *testing.B) {
-	clock := newReportClock(time.Unix(60_000, 0))
-	base := internalRoundTripperFunc(func(*http.Request) (*http.Response, error) {
-		return &http.Response{
-			StatusCode: http.StatusServiceUnavailable,
-			Header:     http.Header{},
-			Body:       http.NoBody,
-		}, nil
-	})
-	transport := newClockedTransport(b, base, clock.Now)
-	request, err := http.NewRequestWithContext(
-		context.Background(),
-		http.MethodGet,
-		retryTestURL,
-		nil,
-	)
-	if err != nil {
-		b.Fatalf("NewRequestWithContext() error = %v", err)
-	}
-
-	send := func() {
-		response, roundTripErr := transport.RoundTrip(request)
-		if roundTripErr != nil {
-			b.Fatalf("warm RoundTrip() error = %v", roundTripErr)
-		}
-		if closeErr := response.Body.Close(); closeErr != nil {
-			b.Fatalf("warm response Body.Close() error = %v", closeErr)
-		}
-	}
-	for index := range 21 {
-		if index > 0 {
-			clock.Advance(2 * time.Second)
-		}
-		send()
-	}
-	if setErr := transport.SetMode(Enforce); setErr != nil {
-		b.Fatalf("SetMode(Enforce) error = %v", setErr)
-	}
-	clock.Advance(2 * time.Second)
-	send()
-	if opens := transport.Stats().BreakerOpens; opens != 1 {
-		b.Fatalf("BreakerOpens = %d, want 1", opens)
-	}
+	transport, request := openBreakerTransport(b)
 
 	b.ReportAllocs()
 	b.ResetTimer()

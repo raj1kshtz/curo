@@ -1534,8 +1534,11 @@ The first implementation must meet these structural targets:
 | Metric labels | Closed or capacity-bounded |
 
 Latency and allocation benchmarks compare Curo modes with the same base
-transport. The initial harness establishes a local baseline; numerical
-regression gates wait for a repeatable CI benchmark environment.
+transport. Allocation counts are deterministic, so tests hold them exactly: a
+change that adds or removes an allocation on a measured path fails until the
+expected count is updated. Timing is not gated, because shared CI runners are
+too noisy for repeatable numbers; CI runs every benchmark once so that none of
+them breaks unnoticed.
 
 The observer, diagnoser, policy, retry budget, dependency breaker, and
 adaptive timeout store 10,000 bytes of bounded target state on 64-bit
@@ -1547,7 +1550,10 @@ Benchmarks cover Off, warm Observe, and warm Enforce paths with an already
 canonical target, no retry, and no adaptive timeout, plus a request rejected
 by an open dependency breaker; all four perform zero Curo heap allocations per
 request with the benchmark base transport. A warm `Enforce` read with an
-adaptive timeout performs six allocations totaling 656 bytes. Inputs that
+adaptive timeout performs six allocations totaling 656 bytes. An `Enforce`
+request to a target in the overflow aggregate also performs zero allocations.
+The allocation gates run without the race detector and coverage
+instrumentation, because both change allocation counts. Inputs that
 require case or IP normalization may use bounded transient allocation.
 
 ## 20. Security Considerations
@@ -1620,7 +1626,10 @@ Fuzz:
 
 ### 21.6 Simulation
 
-Run deterministic traffic traces for:
+A test-only simulator drives a real `Transport` through scripted dependency
+behavior in virtual time. It runs one request goroutine at a time, so every
+run of a scenario takes the same steps on every platform and Go release.
+Traces cover:
 
 - Healthy stable traffic.
 - Latency degradation.
@@ -1628,11 +1637,25 @@ Run deterministic traffic traces for:
 - Full dependency outage.
 - Rate limiting.
 - Recovery and breaker probing.
+- A dependency that stops answering.
 - High-cardinality target input.
 - Simultaneous target failures.
 
-Measure false intervention, retry amplification, recovery delay, and state
-bounds.
+Each trace runs in `Enforce` and in `Observe` with the same requests and
+random draws, and is compared with the same requests sent without Curo.
+`Observe` must match that baseline exactly. An `Enforce` run must keep the
+request guarantees of this document: at most one retry, retries only for
+replay-safe requests, no cut below the timeout floor, probes and rejections
+only while a breaker is open, cooldown spacing, and report bounds. `Stats`
+must agree with a per-request tally.
+
+The golden scorecard `testdata/simulation.golden` measures false intervention
+(rejections and cuts of requests that would have succeeded), retry
+amplification (attempts per request, overall and during the fault), detection
+and recovery delay, waits against the baseline, and state bounds. It also
+lists breaker opens and probes, and the decisions of watched targets sampled
+every simulated second. A behavior change fails the test until the scorecard
+is regenerated, so every change is reviewed as a diff.
 
 ### 21.7 Benchmarks
 
@@ -1646,6 +1669,9 @@ Benchmark:
 - Retry budget acquisition.
 - Registry hit, miss, overflow, and expiry.
 - Concurrent observation updates.
+
+CI runs each benchmark once, and the allocation gates in section 19 hold the
+allocation counts of the request paths.
 
 ## 22. Rollout Model
 

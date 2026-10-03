@@ -299,6 +299,88 @@ func TestLatencySummaryKeepsFencedAndHistoricalSamples(t *testing.T) {
 	}
 }
 
+func TestLatencySummaryKeepsTheBoundaryMinute(t *testing.T) {
+	t.Parallel()
+
+	slow := observation{
+		outcome:       outcomeSuccess,
+		latencyBucket: latencyBucket(4 * time.Second),
+		hasLatency:    true,
+	}
+	fast := observation{
+		outcome:       outcomeSuccess,
+		latencyBucket: latencyBucket(time.Millisecond),
+		hasLatency:    true,
+	}
+	type sample struct {
+		value observation
+		at    time.Duration
+	}
+	tests := []struct {
+		name       string
+		samples    []sample
+		at         time.Duration
+		recent     uint64
+		historical uint64
+	}{
+		{
+			// The recent window starts at 2m40s, inside the baseline minute
+			// that starts at 2m, which the historical window leaves out.
+			name: "minute holding the recent window start",
+			samples: []sample{
+				{value: fast, at: time.Minute + 30*time.Second},
+				{value: slow, at: 2*time.Minute + 12*time.Second},
+				{value: fast, at: 2*time.Minute + 50*time.Second},
+				{value: fast, at: 4*time.Minute + 20*time.Second},
+			},
+			at:         4*time.Minute + 30*time.Second,
+			recent:     2,
+			historical: 1,
+		},
+		{
+			// The recent window starts at 40s, before any minute is complete.
+			name: "first minute",
+			samples: []sample{
+				{value: slow, at: 5 * time.Second},
+				{value: fast, at: 50 * time.Second},
+			},
+			at:     2*time.Minute + 30*time.Second,
+			recent: 1,
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			state := newTarget(0, true)
+			for _, sample := range test.samples {
+				if !state.record(int64(sample.at), sample.value) {
+					t.Fatalf("sample at %v was rejected", sample.at)
+				}
+			}
+
+			snapshot := state.snapshotAt(int64(test.at))
+			if snapshot.Recent.LatencySamples != test.recent ||
+				snapshot.Historical.LatencySamples != test.historical {
+				t.Errorf(
+					"windows hold %d recent and %d historical samples, want %d and %d",
+					snapshot.Recent.LatencySamples,
+					snapshot.Historical.LatencySamples,
+					test.recent,
+					test.historical,
+				)
+			}
+			want := diagnose.Latency{
+				Samples: uint64(len(test.samples)),
+				Slowest: 5 * time.Second,
+			}
+			if snapshot.Latency != want {
+				t.Errorf("latency = %+v, want %+v", snapshot.Latency, want)
+			}
+		})
+	}
+}
+
 func TestCutsBelowTheCeilingAreOnlyLatencySamples(t *testing.T) {
 	t.Parallel()
 

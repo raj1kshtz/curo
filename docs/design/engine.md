@@ -1685,6 +1685,9 @@ The recommended adoption sequence is:
 6. Expand gradually.
 7. Switch to `Off` immediately if application semantics are unexpected.
 
+The [operations guide](../guides/operations.md) expands each step with the
+signals to review and the measured behavior to expect.
+
 Each process starts with cold local evidence after restart. There is no hidden
 state dependency on another process.
 

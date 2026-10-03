@@ -15,4 +15,10 @@
 // headers do not arrive within the target's adaptive timeout, which stays
 // within the bounds set by WithTimeoutBounds and never extends the caller's
 // deadline.
+//
+// The [operations guide] explains how to bound requests, choose timeout
+// bounds, roll out Enforce, monitor a Transport, and what to expect when a
+// dependency fails.
+//
+// [operations guide]: https://github.com/raj1kshtz/curo/blob/main/docs/guides/operations.md
 package curo

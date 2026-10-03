@@ -12,8 +12,10 @@ const (
 
 	// Enforce permits eligible actions within fixed safety bounds: at most one
 	// budgeted retry of a replay-safe request whose target has a current Retry
-	// candidate, and failing requests fast with ErrBreakerOpen while the
-	// target's dependency breaker is open.
+	// candidate, failing requests fast with ErrBreakerOpen while the target's
+	// dependency breaker is open, and ending a read request with ErrTimeout
+	// when response headers do not arrive within its target's adaptive
+	// timeout.
 	Enforce
 )
 

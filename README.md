@@ -31,11 +31,15 @@ application to tune static thresholds.
 | Adaptive behavior | Readiness, diagnosis, and candidates reported; retries, dependency breakers, and adaptive timeouts applied in `Enforce` |
 | Performance data | Benchmarks for every measured path, with exact allocation gates in CI |
 | Regression gates | Deterministic failure simulation of nine scenarios with a reviewed scorecard, and full statement coverage in CI |
+| Operational guidance | [Operations guide](docs/guides/operations.md) for wiring, deadlines, timeout bounds, rollout, monitoring, and incidents |
 
 Public documentation is updated as features become real, rather than
 documenting planned APIs as if they already exist.
 
 ## Current API
+
+This section describes each mechanism. To run Curo in a service, start with
+the [operations guide](docs/guides/operations.md).
 
 ```go
 func newHTTPClient() (*http.Client, *curo.Transport, error) {
@@ -274,7 +278,10 @@ Set the ceiling above the longest time to response headers that a read may
 legitimately take, because no read waits longer. `WithTimeoutBounds(0, 0)`
 disables adaptive timeouts. A request whose context deadline leaves no more
 time than its timeout keeps only that deadline, and Curo never extends a
-caller's deadline.
+caller's deadline. A read that its caller's deadline ends is never a
+dependency failure, so keep the ceiling below the deadlines that callers set,
+as the [operations guide](docs/guides/operations.md#choose-timeout-bounds)
+explains.
 
 A timed request is sent as a shallow copy with a derived context, which Curo
 cancels when the timeout expires. `RoundTrip` then returns `curo.ErrTimeout`
@@ -384,15 +391,13 @@ Architectural decisions are recorded separately so that rejected alternatives
 and long-term constraints remain reviewable. See the
 [ADR index](docs/adr/README.md).
 
-The [documentation index](docs/README.md) links architecture, design, and
-project governance material.
+The [documentation index](docs/README.md) links architecture, design,
+operations, and project governance material.
 
 ## Implementation sequence
 
-The next milestones are:
-
-1. Publish operational guidance based on the measured behavior.
-2. Review API compatibility and prepare the first release.
+The next milestone is to review API compatibility and prepare the first
+release.
 
 ## Contributing
 

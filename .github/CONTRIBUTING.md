@@ -75,6 +75,9 @@ and explain the scorecard diff in the pull request:
 go test -run '^TestSimulation$' -update .
 ```
 
+The [operations guide](../docs/guides/operations.md) cites scorecard
+numbers, so update it in the same pull request when they change.
+
 ## Documentation
 
 - Keep architecture diagram sources and rendered SVGs synchronized. Rendering

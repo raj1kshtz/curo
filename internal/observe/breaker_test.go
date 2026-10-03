@@ -10,6 +10,7 @@ import (
 	"github.com/raj1kshtz/curo/internal/breaker"
 	"github.com/raj1kshtz/curo/internal/diagnose"
 	"github.com/raj1kshtz/curo/internal/policy"
+	"github.com/raj1kshtz/curo/internal/timeout"
 )
 
 const (
@@ -33,7 +34,7 @@ func TestAdmitPassesWithoutAnOpenBreaker(t *testing.T) {
 	observer := NewWithClock(func() time.Time {
 		reads.Add(1)
 		return clock.Now()
-	})
+	}, noTimeouts)
 
 	if token, admission := (*Observer)(nil).Admit(Token{}); admission != breaker.Pass ||
 		token != (Token{}) {
@@ -70,7 +71,7 @@ func TestFinishReportsTripOnlyForAdmittedDependencyFailures(t *testing.T) {
 	t.Parallel()
 
 	clock := newObservationClock(time.Unix(21_000, 0))
-	observer := NewWithClock(clock.Now)
+	observer := NewWithClock(clock.Now, noTimeouts)
 	request, state := recordDownTarget(t, observer, clock, "down.example")
 	clock.Advance(2 * time.Second)
 
@@ -119,7 +120,7 @@ func TestTripRequiresCurrentBreakerOpenPlan(t *testing.T) {
 
 	origin := time.Unix(22_000, 0)
 	clock := newObservationClock(origin)
-	observer := NewWithClock(clock.Now)
+	observer := NewWithClock(clock.Now, noTimeouts)
 
 	recordTransientTarget(t, observer, clock, "transient.example")
 	retrying := admit(
@@ -168,7 +169,7 @@ func TestOpenBreakerAdmitsOneProbeAndClosesOnAnswer(t *testing.T) {
 	t.Parallel()
 
 	clock := newObservationClock(time.Unix(23_000, 0))
-	observer := NewWithClock(clock.Now)
+	observer := NewWithClock(clock.Now, noTimeouts)
 	request, state := recordDownTarget(t, observer, clock, "down.example")
 	openBreaker(t, observer, clock, request)
 
@@ -258,7 +259,7 @@ func TestFailedProbeReopensWithLongerCooldown(t *testing.T) {
 	t.Parallel()
 
 	clock := newObservationClock(time.Unix(24_000, 0))
-	observer := NewWithClock(clock.Now)
+	observer := NewWithClock(clock.Now, noTimeouts)
 	request, state := recordDownTarget(t, observer, clock, "down.example")
 	openBreaker(t, observer, clock, request)
 
@@ -289,7 +290,7 @@ func TestExpiredProbeLeaseAllowsAnotherProbe(t *testing.T) {
 	t.Parallel()
 
 	clock := newObservationClock(time.Unix(25_000, 0))
-	observer := NewWithClock(clock.Now)
+	observer := NewWithClock(clock.Now, noTimeouts)
 	request, state := recordDownTarget(t, observer, clock, "down.example")
 	openBreaker(t, observer, clock, request)
 
@@ -327,7 +328,7 @@ func TestCanceledProbeReopensWithoutEscalating(t *testing.T) {
 	t.Parallel()
 
 	clock := newObservationClock(time.Unix(26_000, 0))
-	observer := NewWithClock(clock.Now)
+	observer := NewWithClock(clock.Now, noTimeouts)
 	request, state := recordDownTarget(t, observer, clock, "down.example")
 	openBreaker(t, observer, clock, request)
 
@@ -360,7 +361,7 @@ func TestCanceledRequestsAreNeverProbes(t *testing.T) {
 	t.Parallel()
 
 	clock := newObservationClock(time.Unix(27_000, 0))
-	observer := NewWithClock(clock.Now)
+	observer := NewWithClock(clock.Now, noTimeouts)
 	request, _ := recordDownTarget(t, observer, clock, "down.example")
 	openBreaker(t, observer, clock, request)
 	clock.Advance(breaker.BaseCooldown)
@@ -384,7 +385,7 @@ func TestRetiredTargetBypassesItsBreaker(t *testing.T) {
 	t.Parallel()
 
 	clock := newObservationClock(time.Unix(28_000, 0))
-	observer := NewWithClock(clock.Now)
+	observer := NewWithClock(clock.Now, noTimeouts)
 	request, state := recordDownTarget(t, observer, clock, "down.example")
 	openBreaker(t, observer, clock, request)
 	clock.Advance(breaker.BaseCooldown)
@@ -409,7 +410,7 @@ func TestClosingFencesEvidenceRecordedBeforeTheClose(t *testing.T) {
 	t.Parallel()
 
 	clock := newObservationClock(time.Unix(29_000, 0))
-	observer := NewWithClock(clock.Now)
+	observer := NewWithClock(clock.Now, noTimeouts)
 	request, state := recordDownTarget(t, observer, clock, "down.example")
 	clock.Advance(2 * time.Second)
 	straggler := admit(t, observer, request, breaker.Pass)
@@ -462,6 +463,58 @@ func TestClosingFencesEvidenceRecordedBeforeTheClose(t *testing.T) {
 	}
 }
 
+func TestClosingProbeEvaluatesTheTargetOnce(t *testing.T) {
+	t.Parallel()
+
+	clock := newObservationClock(time.Unix(29_500, 0))
+	observer := NewWithClock(clock.Now, timeout.DefaultBounds)
+	request := testRequest("GET", "https", "down.example", "")
+	state := warmTimeout(t, observer, clock, request)
+
+	// The warm-up leaves the recent window but keeps the timeout as history.
+	// Recent failures then open the breaker.
+	clock.Advance(3 * time.Minute)
+	var token Token
+	for range 21 {
+		clock.Advance(2 * time.Second)
+		token = observer.Begin(request)
+		observer.Finish(token, breakerTestFailure)
+	}
+	if plan := publishedPlan(token); plan.Candidates != policy.CandidateBreakerOpen|policy.CandidateTimeout {
+		t.Fatalf("down plan candidates = %v, want BreakerOpen and Timeout", plan.Candidates)
+	}
+	openBreaker(t, observer, clock, request)
+
+	// A slow answer closes the breaker and raises the timeout. Only the
+	// evaluation after the close records a change.
+	clock.Advance(breaker.BaseCooldown)
+	probe := admit(t, observer, request, breaker.Probe)
+	before := len(state.changes.snapshot())
+	clock.Advance(4 * time.Second)
+	if completion := observer.Finish(probe, breakerTestSuccess); !completion.Recorded {
+		t.Fatalf("probe completion = %+v, want recorded", completion)
+	}
+	if breakerState(state) != breaker.Closed {
+		t.Fatal("answered probe did not close the breaker")
+	}
+
+	changes := state.changes.snapshot()
+	if len(changes) != before+1 {
+		t.Fatalf("closing probe recorded %d changes, want 1", len(changes)-before)
+	}
+	latest := changes[len(changes)-1]
+	if latest.result.Readiness != diagnose.ReadinessStale ||
+		latest.plan.Candidates != policy.CandidateTimeout ||
+		latest.plan.Timeout != 15*time.Second {
+		t.Errorf(
+			"change = %v with %v and %v, want Stale with only a 15s timeout",
+			latest.result.Readiness,
+			latest.plan.Candidates,
+			latest.plan.Timeout,
+		)
+	}
+}
+
 func TestCallerErrIncludesTheCancelChannel(t *testing.T) {
 	t.Parallel()
 
@@ -501,7 +554,7 @@ func TestObserverClassifiesClosedCancelChannelAsCallerOwned(t *testing.T) {
 	t.Parallel()
 
 	clock := newObservationClock(time.Unix(30_000, 0))
-	observer := NewWithClock(clock.Now)
+	observer := NewWithClock(clock.Now, noTimeouts)
 	closed := make(chan struct{})
 	close(closed)
 	token := observer.Begin(Request{
@@ -528,6 +581,7 @@ func TestProbeOutcomeTreatsAnyAnswerAsHealthy(t *testing.T) {
 		diagnosisNeutral:           breaker.Healthy,
 		diagnosisClientFailure:     breaker.Healthy,
 		diagnosisCallerOwned:       breaker.Inconclusive,
+		diagnosisLatencyOnly:       breaker.Inconclusive,
 		diagnosisRateLimited:       breaker.Failed,
 		diagnosisDependencyFailure: breaker.Failed,
 	}

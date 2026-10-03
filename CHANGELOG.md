@@ -15,9 +15,9 @@ changes will always be listed here under **Changed** or **Removed**.
 - Project foundation: Apache-2.0 licence, contribution guide, code of conduct, security
   policy, governance model and CI pipeline.
 - ADR lifecycle and authoring guidance, plus Architecture Decision Records
-  `0001` through `0008` covering the embedded Go library, host application
+  `0001` through `0009` covering the embedded Go library, host application
   inviolability, adaptive policy, dependencies, operating modes, retry
-  budgets, package boundaries, and dependency breakers.
+  budgets, package boundaries, dependency breakers, and adaptive timeouts.
 - Engine high-level design with reviewed context, component, runtime,
   containment, state-ownership, and mitigation-control diagrams.
 - Initial public transport API with explicit base ownership, validated
@@ -34,14 +34,15 @@ changes will always be listed here under **Changed** or **Removed**.
 - Bounded readiness and deterministic internal diagnosis using disjoint recent
   and historical evidence, closed classes, fixed reason codes, and expiring
   immutable results.
-- Policy version 2 control candidates: a `Ready` `Transient` diagnosis selects
-  a retry candidate, and a `Ready` `DependencyDown` diagnosis selects a
-  breaker-open candidate. Candidates are applied only in `Enforce`.
+- Policy version 3 control candidates: a `Ready` `Transient` diagnosis selects
+  a retry candidate, a `Ready` `DependencyDown` diagnosis selects a
+  breaker-open candidate, and enough retained latency evidence selects a
+  timeout candidate. Candidates are applied only in `Enforce`.
 - `Transport.Report` with detached per-target decisions covering normalized
   identity, readiness, diagnosis, ordered reason codes, recent and historical
-  evidence summaries, policy version, candidates, and evaluation and expiry
-  times, plus the latest 256 candidate changes with contiguous sequence
-  numbers.
+  evidence summaries, a latency summary, policy version, candidates, the
+  adaptive timeout, and evaluation and expiry times, plus the latest 256
+  candidate changes with contiguous sequence numbers.
 - Guarded report construction: a Curo failure returns an empty report and
   counts toward `InternalFailures` and self-disable.
 - Budgeted retries in `Enforce`: a replay-safe `GET`, `HEAD`, `OPTIONS`, or
@@ -61,11 +62,31 @@ changes will always be listed here under **Changed** or **Removed**.
   probe, and any response other than 429 or 5xx closes the breaker.
 - `ErrBreakerOpen`, plus `Stats` fields `BreakerOpens`, `BreakerProbes`, and
   `BreakerRejections`.
+- Adaptive timeouts in `Enforce`: once a target holds at least 100 latency
+  samples from about the last 30 minutes, a read request other than a breaker
+  probe must receive response headers within three times the upper bound of
+  the bucket that holds the target's slowest sample, clamped to the timeout
+  bounds. The request is sent as a shallow copy with a derived context, the
+  caller's deadline is never extended, an attempt that the timeout ended is
+  never retried, and a mode change, `Close`, or self-disable withdraws a
+  timeout that has not fired. An attempt that the timeout ended is recorded
+  as a latency sample at the timeout, and is a dependency failure only when
+  the timeout was the ceiling.
+- `WithTimeoutBounds`, with a default floor of 2 seconds and ceiling of 30
+  seconds. Zero for both disables adaptive timeouts.
+- `ErrTimeout`, which reports true from `Timeout` and matches
+  `context.DeadlineExceeded`, plus `Stats` fields `Timeouts` and
+  `ShadowTimeouts`. In `Observe`, `ShadowTimeouts` counts attempts that the
+  adaptive timeout would have ended.
+- `CandidateTimeout`, plus `Decision` fields `Latency` and `Timeout`.
 
 ### Changed
 
+- Policy version 3 replaces version 2. It selects `CandidateTimeout` from
+  retained latency evidence, independently of the diagnosis and readiness.
 - Policy version 2 replaces version 1. A `Saturation` diagnosis no longer
   selects the breaker-open candidate and is reported without a candidate.
+- A change is also recorded when a target's adaptive timeout changes.
 
 ### Fixed
 

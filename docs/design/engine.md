@@ -1,7 +1,7 @@
 # Curo Engine High-Level Design
 
 - **Status:** Design target for `v0.1.0`
-- **Updated:** 2026-10-02
+- **Updated:** 2026-10-03
 - **Scope:** Embedded Go engine for outbound `net/http` calls
 - **Audience:** Maintainers, contributors, reviewers, and adopters
 
@@ -47,6 +47,8 @@ This design is governed by the following accepted ADRs:
   root public API and internal implementation.
 - [ADR-0008](../adr/0008-adaptive-dependency-breakers.md):
   adaptive dependency breakers.
+- [ADR-0009](../adr/0009-adaptive-timeouts.md):
+  adaptive timeouts for reads.
 
 If this document conflicts with an accepted ADR, the ADR controls and this
 document must be corrected.
@@ -103,7 +105,9 @@ The implementation must preserve these invariants:
    All decision data needed for an attempt is copied into an immutable
    snapshot before calling the base transport.
 7. **No request-scoped goroutine.**
-   A request does not create a Curo goroutine.
+   A request does not start a Curo goroutine. When an adaptive timeout
+   expires, the runtime runs Curo's short timer callback on its own
+   goroutine, inside a recovery boundary.
 8. **Deterministic policy.**
    Equal ordered evidence, configuration, time, and random input produce the
    same decision.
@@ -164,14 +168,18 @@ implementation types.
 
 The current public surface is deliberately limited to `Transport`, `Mode`,
 `Option`, `Stats`, `Report` and its detached decision types, `New`,
-`WithMode`, mode access, aggregate statistics, the pull-based decision report,
-and lifecycle close. Report values use closed enums and copied fields, so
-internal registries, evaluation state, and policy types stay private. Retries
-add no public type or option: their bounds are fixed internal constants, and
-their aggregate counts appear in `Stats`. Dependency breakers add only the
-`ErrBreakerOpen` sentinel error and aggregate `Stats` counters, and their
-bounds are fixed as well. Replay opt-in for unsafe methods, mitigation
-configuration, and applied-action auditing remain deferred.
+`WithMode`, `WithTimeoutBounds`, mode access, aggregate statistics, the
+pull-based decision report, and lifecycle close. Report values use closed
+enums and copied fields, so internal registries, evaluation state, and policy
+types stay private. Retries add no public type or option: their bounds are
+fixed internal constants, and their aggregate counts appear in `Stats`.
+Dependency breakers add only the `ErrBreakerOpen` sentinel error and aggregate
+`Stats` counters, and their bounds are fixed as well. Adaptive timeouts add
+the `ErrTimeout` sentinel error, the `WithTimeoutBounds` option for their
+floor and ceiling, the `CandidateTimeout` candidate with the `Timeout` and
+`Latency` decision fields, and aggregate `Stats` counters. Replay opt-in for
+unsafe methods, other mitigation configuration, and applied-action auditing
+remain deferred.
 
 ### 7.2 Transport Adapter
 
@@ -198,6 +206,18 @@ When a completed `Enforce` preflight finds the target's dependency breaker
 open, the adapter closes the request body and returns `ErrBreakerOpen`
 without calling the base transport. That request has no postflight.
 
+When `Enforce` applies an adaptive timeout, a guarded step before the base
+call derives a context from the request's context, starts a timer, and makes
+a shallow copy of the request that carries the derived context. The base
+transport receives the copy, and the original request is not changed. A
+contained step after the base call settles the attempt. It stops the timer,
+then releases the derived context at once, or wraps the response body so that
+closing the body or reading it to the end releases it. If the timer settled
+the attempt first, the adapter closes any late response and returns
+`ErrTimeout`. The timer callback is the only Curo code that runs while a base
+call is in progress. It runs inside a recovery boundary and only cancels the
+derived context.
+
 ### 7.3 Guard
 
 The guard owns:
@@ -220,6 +240,9 @@ path adds guarded preparation and commit stages. It closes a discarded
 response body through a containment boundary that runs even after
 self-disable, because the body must still be released. The body of a request
 rejected by a dependency breaker is closed through the same boundary.
+Starting an adaptive timeout and its timer callback run inside the guard, so
+self-disable skips them. Settling a timed attempt uses the containment
+boundary, because its timer and derived context must still be released.
 
 ### 7.4 Mode Gate
 
@@ -254,6 +277,9 @@ it takes effect when the wait ends, at most 100 milliseconds later.
 
 Opening a dependency breaker is also a new intervention. A request whose
 authority was revoked before postflight processes its result cannot open one.
+Ending an attempt with an adaptive timeout is one as well. A timer that fires
+after the request's authority was revoked does nothing, so a mode change,
+`Close`, or self-disable withdraws every adaptive timeout that has not fired.
 
 ### 7.5 Observer
 
@@ -273,7 +299,9 @@ they never enter evidence or fund a budget, so they cannot inflate demand or
 influence diagnosis. A dependency breaker probe is recorded as an initial
 attempt, and its result also settles the breaker. A request rejected by an
 open breaker makes no attempt and is not recorded. Per-target retry, separate
-probe, and in-flight evidence remain deferred.
+probe, and in-flight evidence remain deferred. An attempt that an adaptive
+timeout ended is recorded as a timed-out attempt with a latency sample at the
+timeout, as described in the observation model.
 
 ### 7.6 Diagnoser
 
@@ -300,6 +328,11 @@ Each result also summarizes the recent and historical windows it used:
 dependency-relevant attempts, dependency failures, rate limits, client
 failures, and the span between the first and last relevant attempts.
 
+A result also carries a latency summary for the adaptive timeout: the number
+of retained latency samples and the upper bound of the slowest non-empty
+latency bucket, across the recent window and the historical baseline. No
+diagnosis rule reads it, and closing a dependency breaker does not fence it.
+
 ### 7.7 Policy Evaluator
 
 The policy evaluator converts diagnosis and safety state into an immutable
@@ -314,7 +347,7 @@ action plan. The plan may contain:
 A plan is not authority. The mitigation coordinator still verifies mode,
 freshness, request eligibility, context, and capacity.
 
-The implemented evaluator is a pure internal package with policy version 2.
+The implemented evaluator is a pure internal package with policy version 3.
 It runs whenever a diagnosis is published, under the same target lock, and
 maps classes to a closed candidate set:
 
@@ -325,16 +358,22 @@ maps classes to a closed candidate set:
 | Any other class | None |
 
 Candidates require `Ready` evidence. A mapped class without it selects no
-candidate and records a `ReadinessRequired` reason. A plan expires with the
-diagnosis it was derived from. Plans are published through `Transport.Report`.
-In `Enforce`, a current plan with the retry candidate lets the retry control
-proceed with its own checks, and a current plan with the breaker-open
-candidate lets a dependency failure open the target's dependency breaker.
+candidate and records a `ReadinessRequired` reason. The timeout candidate is
+the exception: it depends on neither the class nor readiness. It is selected
+whenever the result's latency summary selects an adaptive timeout within the
+target's bounds, and the plan then carries that timeout. A plan expires with
+the diagnosis it was derived from. Plans are published through
+`Transport.Report`. In `Enforce`, a current plan with the retry candidate lets
+the retry control proceed with its own checks, a current plan with the
+breaker-open candidate lets a dependency failure open the target's dependency
+breaker, and a current plan with the timeout candidate gives the target's read
+requests an adaptive timeout.
 
 Version 1 also mapped `Saturation` to the breaker-open candidate. Version 2
 reports `Saturation` without a candidate because a rate-limiting dependency is
 still answering, and failing every request fast would turn throttling into an
-outage. A throttling control requires its own decision.
+outage. A throttling control requires its own decision. Version 3 added the
+timeout candidate and kept the class mapping.
 
 ### 7.8 Mitigation Coordinator
 
@@ -344,15 +383,20 @@ timeouts. It does not own long-term evidence.
 Before network I/O, it copies all required state into an immutable request
 snapshot and releases internal locks.
 
-The implemented coordinator covers retries and dependency breakers and lives
-in the root transport. In `Enforce`, preflight consults the target's breaker
-and may reject the request or select it as a probe. Postflight settles a
-probe, opens the breaker when the request's own dependency failure meets a
-current breaker-open plan and the request's authority is still current, then
-checks request eligibility and reserves retry budget. A final guarded commit
-check after the backoff verifies authority, caller cancellation and deadline,
-a closed breaker, and the published plan again. No lock is held during the
-backoff or either base transport call.
+The implemented coordinator covers retries, dependency breakers, and adaptive
+timeouts, and lives in the root transport. In `Enforce`, preflight consults
+the target's breaker and may reject the request or select it as a probe. For
+a request the closed breaker admits, preflight also looks up the adaptive
+timeout that the target's current plan selects, which only read targets have,
+and drops it when the caller already canceled the request or the caller's
+deadline is no later. Postflight settles a probe, opens the breaker when the
+request's own dependency failure meets a current breaker-open plan and the
+request's authority is still current, then checks request eligibility and
+reserves retry budget. A final guarded commit check after the backoff
+verifies authority, caller cancellation and deadline, a closed breaker, and
+the published plan again, and checks the timeout against the remaining
+deadline once more. No lock is held during the backoff or either base
+transport call.
 
 ### 7.9 Base Transport
 
@@ -397,7 +441,9 @@ For each new request:
 Observe does not add a timeout, delay, retry, fail-fast response, or breaker
 probe, and it never opens a dependency breaker. It funds retry budgets from
 recorded initial attempts but never reserves from them, so credit earned while
-observing is available after a switch to `Enforce`.
+observing is available after a switch to `Enforce`. It also looks up the
+adaptive timeout `Enforce` would apply to each request, and counts initial
+attempts that took longer in `Stats.ShadowTimeouts` without ending them.
 
 The current implementation performs steps 1 through 6 and step 8. Step 7 is
 pull-based: a candidate change is retained in a bounded journal that
@@ -423,15 +469,21 @@ For each new request:
 The exact result-selection rule across multiple completed attempts is part of
 the public error and response contract.
 
-The current implementation has no timeout gate. Steps 2 and 3 apply the
-target's dependency breaker, whose state changes under the target lock rather
-than through a separate action snapshot:
+Steps 2 and 3 apply the target's dependency breaker, whose state changes
+under the target lock rather than through a separate action snapshot, and
+then the target's adaptive timeout:
 
 1. A closed breaker lets the request continue.
 2. While the breaker is open, the request fails fast with `ErrBreakerOpen`:
    Curo closes its body, skips steps 4 through 11, and records nothing.
 3. After the cooldown, one request becomes a probe and continues. Other
    requests fail fast until its result settles the breaker.
+4. A request that the closed breaker admitted gets the adaptive timeout that
+   the target's current plan selects, unless the caller already canceled it
+   or the caller's deadline is no later. Only read targets select one. In
+   step 4, Curo then sends a shallow copy of the request with a derived
+   context and ends the attempt with `ErrTimeout` if response headers do not
+   arrive in time.
 
 In step 6, postflight settles a probe, and it opens a closed breaker when the
 request's own attempt was a dependency failure, the target's published plan
@@ -439,8 +491,8 @@ selects the breaker-open candidate, and the request's authority is still
 current. Steps 6 through 9 implement the retry path:
 
 1. Postflight records the initial attempt, refreshes an expired decision, and
-   checks retry eligibility. Its last step reserves one token from both retry
-   budgets.
+   checks retry eligibility. An attempt that the adaptive timeout ended is
+   never eligible. Its last step reserves one token from both retry budgets.
 2. Curo waits a cancellable 25 to 100 millisecond backoff, clones the request,
    and obtains a fresh body from `GetBody` when the request has one.
 3. A final guarded commit check confirms that the request's authority is still
@@ -448,14 +500,16 @@ current. Steps 6 through 9 implement the retry path:
    still leaves time for an attempt as long as the first, the target's
    breaker is still closed, and its published plan still permits a retry.
 4. Curo commits the reservation, closes the discarded first response body,
-   and calls the base transport once more with the clone.
+   and calls the base transport once more with the clone. The clone gets the
+   request's adaptive timeout when the caller's deadline still comes later.
 
 Step 10 is not implemented: decisions are reported without applied-action
-records, and `Stats` counts retries and breaker transitions in aggregate. For
-step 11, a retry that starts supplies the result, whether a response, an
-error, or a panic from the base transport. A request without a started retry
-returns its first captured result untouched. A request makes at most two base
-transport calls, and a probe makes one because it is never retried.
+records, and `Stats` counts retries, breaker transitions, and timeouts in
+aggregate. For step 11, a retry that starts supplies the result, whether a
+response, an error, or a panic from the base transport. A request without a
+started retry returns its first result, which is `ErrTimeout` when the
+adaptive timeout ended the attempt. A request makes at most two base transport
+calls, and a probe makes one because it is never retried.
 
 ## 9. Failure Containment
 
@@ -470,21 +524,37 @@ Instead, it guards only Curo-owned partitions:
 
 ```text
 mode and self-disable check
-    -> guarded preflight and breaker admission
+    -> guarded preflight, breaker admission, and timeout lookup
     -> when the breaker rejects: contained request body close, ErrBreakerOpen
+    -> guarded start of an adaptive timeout
     -> unguarded base RoundTrip
+       (an expiring timer runs a guarded callback that cancels the attempt)
+    -> contained settlement of the adaptive timeout
     -> capture response and error
     -> guarded postflight, breaker transition, and retry reservation
     -> guarded backoff, clone, and body replay
     -> guarded commit check
     -> contained close of the discarded response body
+    -> guarded start of the retry's adaptive timeout
     -> unguarded base retry attempt
+    -> contained settlement of the retry's adaptive timeout
     -> return the retry result
 ```
 
 This structure preserves host-owned transport panics and removes Curo-owned
 fallible work from the interval between starting an attempt and capturing its
-result.
+result. The one exception is the timer callback of an adaptive timeout. It
+runs on the runtime's timer goroutine inside a recovery boundary, and it only
+cancels the context Curo derived for the attempt. If the base transport
+panics during a timed attempt, a deferred step stops the timer and releases
+the derived context, and the panic continues. That step contains only a
+failure of its own, never the transport's panic.
+
+If starting an adaptive timeout fails, the original request is sent untimed.
+Settling a timed attempt records that the attempt returned before it stops
+the timer, so if stopping the timer fails, the failure is counted and the
+result is returned as usual: closing its body, or reading it to the end,
+still releases the derived context.
 
 A breaker rejects a request only after preflight completes. If preflight fails
 or the guard has self-disabled, the request reaches the base transport
@@ -520,8 +590,10 @@ fails after a response or error has been captured:
 ### 9.4 Ambiguous Attempt State
 
 The implementation must be structured so Curo-owned code cannot panic between
-attempt start and result capture. If a future integration cannot preserve that
-invariant:
+attempt start and result capture. The only Curo-owned code that runs in that
+interval is the timer callback of an adaptive timeout, which runs inside a
+recovery boundary and can only cancel the attempt's derived context. If a
+future integration cannot preserve that invariant:
 
 - It must not blindly replay.
 - It must return an explicit failure when no captured result exists.
@@ -539,6 +611,11 @@ maintenance worker panics:
 
 The registry remains memory-bounded after worker loss. Request access performs
 limited lazy expiry so worker loss cannot create unbounded growth.
+
+The timer callback of an adaptive timeout runs on a goroutine that the
+runtime starts when the timer fires, and it also installs its recovery
+boundary first. A failure there counts like a stage failure, and the attempt
+continues without its timeout.
 
 ### 9.6 Initial Self-Disable Threshold
 
@@ -585,7 +662,12 @@ replacement during target admission.
 ### 10.2 Request Concurrency
 
 Application goroutines call the wrapped transport concurrently. Curo does not
-spawn a goroutine for a request.
+start a goroutine for a request. An adaptive timeout uses a runtime timer,
+whose callback runs on its own goroutine only when the timer fires. When a
+request's context can be canceled and is of a type the context package does
+not recognize, the context package starts a goroutine for the derived
+context, as it does for any derived context, and that goroutine ends when
+either context is done.
 
 The concurrency model is:
 
@@ -595,6 +677,10 @@ The concurrency model is:
   dependency breaker transitions.
 - An atomic per-target flag that lets a request pass a closed dependency
   breaker without the target lock or a clock read.
+- An atomic per-target pointer to the current adaptive timeout, so a request
+  reads it without the target lock until the plan expires.
+- A per-attempt lock that lets exactly one of the timer callback and the
+  returning attempt settle a timed attempt.
 - A short change-journal lock for recording or copying candidate changes.
 - Immutable copies for policy evaluation and network attempts.
 - Lock-free atomic words for retry budgets and reservations.
@@ -687,7 +773,8 @@ window. A completed initial attempt increments exactly one outcome:
 - HTTP failure for another response without a transport error.
 - Transport failure.
 - Caller cancellation.
-- Timeout, classified as caller-owned or transport-owned.
+- Timeout, classified as caller-owned, transport-owned, or ended by Curo's
+  adaptive timeout.
 
 HTTP response class is a parallel bounded dimension whenever a response
 exists. Therefore attempt count equals the sum of the five outcome counts.
@@ -701,18 +788,27 @@ Each attempt also contributes exactly one diagnosis signal:
 - Explicit HTTP 429 rate limit.
 - Non-429 HTTP 4xx client failure.
 - Transport, transport-timeout, or HTTP 5xx dependency failure.
+- Latency-only.
+
+An attempt that Curo's adaptive timeout ended is a dependency failure only
+when its timeout was the ceiling of the target's bounds. Below the ceiling it
+is latency-only, because it shows only that the timeout was too short. Its
+latency sample counts, but the attempt is not relevant evidence, so cutting
+slow reads cannot dilute the failure rates of the attempts around them.
 
 An error takes precedence over a response status, so a response returned
 alongside a transport error cannot be mistaken for rate limiting. Caller-owned
-signals remain recorded but do not contribute to readiness or dependency
+and latency-only signals remain recorded but do not contribute to readiness or
 failure rates.
 
 The latency histogram supports bounded approximate quantiles such as p95 and
 p99 without retaining individual samples. It has fixed bounds from one
 millisecond through 30 seconds plus an overflow bucket. Only attempts that
 return a response without a transport error contribute to latency evidence, so
-caller cancellation and transport failure do not distort a future timeout
-baseline.
+caller cancellation and transport failure do not distort the adaptive
+timeout. An attempt that Curo's adaptive timeout ended contributes a sample at
+its timeout, which is a lower bound of its true latency, so the next timeout
+selected is longer.
 
 Completion time selects the rolling bucket. Each bucket stores its generation.
 A completion older than a newer generation already occupying the same slot is
@@ -724,7 +820,8 @@ slots are ignored even if a target resumes after a long idle interval.
 When a probe closes a dependency breaker, recent snapshots start at the next
 10-second bucket after the close, or after the latest evidence already
 recorded if that is later. Evidence recorded before the close therefore cannot
-open the breaker again. Historical snapshots are not fenced.
+open the breaker again. Historical snapshots are not fenced, and neither is
+the latency summary of the adaptive timeout.
 
 Each actionable target also owns 30 fixed one-minute historical buckets.
 Historical snapshots omit every bucket that overlaps the two-minute recent
@@ -763,9 +860,10 @@ Readiness is separate from diagnosis:
 - `Stale`: prior relevant evidence exists but the two-minute recent window has
   no relevant attempts.
 
-Relevant attempts exclude caller-owned cancellation and caller-owned timeout.
-This prevents caller behavior from warming dependency state. The
-non-actionable overflow aggregate never becomes ready.
+Relevant attempts exclude caller-owned cancellation, caller-owned timeout, and
+attempts that Curo's adaptive timeout ended below its ceiling. This prevents
+caller behavior from warming dependency state. The non-actionable overflow
+aggregate never becomes ready.
 
 Insufficient readiness means no autonomous intervention.
 
@@ -804,10 +902,11 @@ The diagnoser applies conservative ordered rules to aggregate target evidence:
 6. Ready evidence with at least five relevant recent attempts is `Healthy`;
    otherwise the class remains `None`.
 
-Caller-owned signals are excluded from classification, and client or
-rate-limit classes require aggregate evidence rather than one preceding
-request. An isolated dependency failure may produce `Transient`. Response
-status is considered only when the transport returned no error.
+Caller-owned signals are excluded from classification, and so are latency-only
+signals, except that their latency samples count toward the p95 comparison.
+Client or rate-limit classes require aggregate evidence rather than one
+preceding request. An isolated dependency failure may produce `Transient`.
+Response status is considered only when the transport returned no error.
 
 A diagnosis carries at most four fixed reason codes. Its immutable result is
 cached for at most ten seconds. A result derived from recent evidence also
@@ -841,23 +940,39 @@ Safety precedence is:
 
 A stale policy version or expired plan is rejected before use.
 
-The implemented version 2 evaluator uses only the published diagnosis:
-class, readiness, and expiry. Its readiness gate is the first implemented
-safety precedence rule. The retry control checks mode, request eligibility,
-cancellation, deadline, breaker state, and budget itself rather than passing
-them through the evaluator. The dependency breaker likewise checks its own
-state, the request's authority, and the request's outcome. Timeout inputs are
-added with the control that consumes them.
+The implemented version 3 evaluator uses only the published diagnosis and the
+target's timeout bounds. From the diagnosis it reads the class, readiness,
+expiry, and latency summary. Its readiness gate and timeout bounds are the
+safety precedence rules it implements. The retry control checks mode,
+request eligibility, cancellation, deadline, breaker state, and budget itself
+rather than passing them through the evaluator. The dependency breaker
+likewise checks its own state, the request's authority, and the request's
+outcome. The adaptive timeout checks breaker admission and the caller's
+cancellation and deadline itself, and only read targets have timeout bounds.
 
-The retry control and the dependency breaker consume plans. Each uses a plan
-only when the target is live and the plan has the current policy version,
-contains its candidate, and has not expired. The retry control checks again
-after the backoff, and opening a breaker checks again under the target lock.
-Neither evaluates a diagnosis itself. Plans refresh lazily during completion
-traffic, so a failure that arrives while an earlier `Healthy` plan is still
-current is not retried and does not open a breaker. A probe that closes a
-breaker is the exception: it re-evaluates at once, as described for the
-dependency breaker.
+The retry control, the dependency breaker, and the adaptive timeout consume
+plans. Each uses a plan only when the target is live and the plan has the
+current policy version, contains its candidate, and has not expired. The
+retry control checks again after the backoff, and opening a breaker checks
+again under the target lock. Plans refresh lazily during completion traffic,
+so a failure that arrives while an earlier `Healthy` plan is still current is
+not retried and does not open a breaker. There are three exceptions:
+
+- A probe that closes a breaker re-evaluates at once, as described for the
+  dependency breaker.
+- A latency sample slow enough to raise the current timeout re-evaluates at
+  once, so the next request gets the longer timeout.
+- A request whose current plan selected a timeout that has since expired
+  re-evaluates before it starts, so the timeout does not lapse while its
+  evidence is retained.
+
+Two of these evaluations are provisional: the one before a request starts,
+and one raised by an attempt that the timeout ended below its ceiling, which
+is not relevant evidence. The next relevant completion then evaluates again,
+so the diagnosis takes in that completion as soon as it would have otherwise.
+A completion evaluates a target at most once, so a probe that closes a
+breaker evaluates only after the close, even when its latency also raises the
+timeout.
 
 ## 15. Mitigation Controls
 
@@ -929,7 +1044,8 @@ The implemented eligibility rules are:
   or 504 response without a `Retry-After` field. A `Retry-After` field under
   any key casing, even an empty or malformed one, means the dependency asked
   callers to wait. Caller-owned cancellation and deadlines, 429, other 4xx,
-  and other 5xx responses never qualify.
+  and other 5xx responses never qualify, and neither does an attempt that the
+  adaptive timeout ended.
 - **Plan:** the initial attempt was recorded on a regular target whose
   published plan is current, contains the retry candidate, and has not
   expired.
@@ -957,7 +1073,9 @@ breaker, and plan checks. The remaining deadline must then exceed only the
 initial attempt's latency.
 
 The retry request is a clone of the original with the same context and
-`Cancel` channel. `GetBody` is called once, after the backoff and before the
+`Cancel` channel. When the request has an adaptive timeout, the base
+transport receives a shallow copy of the clone with a derived context.
+`GetBody` is called once, after the backoff and before the
 commit check. A `GetBody` error or nil body prevents the retry without
 counting as a Curo failure, because the body belongs to the application. A
 `GetBody` panic is contained and counted. A fresh body obtained for a retry
@@ -1019,7 +1137,7 @@ The implemented transitions are:
 - **Probe:** after the cooldown, the next `Enforce` request becomes the probe
   and moves the breaker to `Probing`, unless its context is done or its
   `Cancel` channel is closed. Such a request is rejected instead. A probe is
-  sent unchanged and is never retried.
+  sent unchanged, without an adaptive timeout, and is never retried.
 - **Close:** any probe response other than 429 or 5xx, without a transport
   error, closes the breaker, because the dependency answered. A close keeps
   the escalation level for the probation period.
@@ -1035,11 +1153,14 @@ ignored, since the expiry already counted as a failure. Results of leases from
 an earlier open episode are always ignored.
 
 When a probe closes the breaker, the observer fences the recent window, as
-described in the observation model, and re-evaluates at once. The published
-decision then has `Stale` readiness and no candidates until fresh evidence
-arrives. Without the re-evaluation, the next dependency failure would meet the
-plan that opened the breaker and open it again immediately. If that plan
-selected a candidate, the re-evaluation records a candidate change.
+described in the observation model, and re-evaluates at once. That is the
+only evaluation of the probe's result, so a change it records never pairs a
+timeout that the probe raised with the plan that opened the breaker. The
+published decision then has `Stale` readiness and no candidates other than an
+adaptive timeout until fresh evidence arrives. Without the re-evaluation, the
+next dependency failure would meet the plan that opened the breaker and open
+it again immediately. If that plan selected a candidate, the re-evaluation
+records a candidate change.
 
 Authority follows the operating modes:
 
@@ -1066,41 +1187,94 @@ decision report, and breaker options remain deferred.
 
 ### 15.3 Adaptive Timeout
 
-An adaptive timeout candidate uses:
+An adaptive timeout bounds how long a read request waits for response
+headers. It is derived from the target's own latency evidence and limited by
+an operator floor and ceiling and by the caller's remaining deadline. Curo
+never extends a caller's deadline.
 
-- Ready latency evidence.
-- A selected bounded quantile.
-- A safety margin.
-- A configured floor.
-- A configured ceiling.
-- The caller's remaining deadline.
+[ADR-0009](../adr/0009-adaptive-timeouts.md) records the implemented
+contract. Only regular read targets select a timeout. The bounded interval is
+the one Curo measures as latency: from handing the attempt to the base
+transport until the base transport returns. Reading the response body is not
+bounded.
 
-Curo never extends an earlier caller deadline. A Curo-created timeout clones
-the request with a derived context and tags the timeout source internally so
-diagnosis can distinguish it from caller cancellation.
+| Parameter | Value |
+| --------- | ----- |
+| Evidence | Latency samples retained in the recent window and the historical baseline, about the last 30 minutes |
+| Minimum evidence | 100 samples |
+| Timeout | Three times the upper bound of the slowest non-empty latency bucket, clamped to the bounds |
+| Default bounds | 2 second floor and 30 second ceiling, set with `WithTimeoutBounds` |
+| Timeouts within the default bounds | 2, 3, 7.5, 15, or 30 seconds |
+| Disabled | `WithTimeoutBounds(0, 0)` |
 
-Observe records the candidate but does not create a new deadline.
+The implemented rules are:
+
+- **Selection:** policy version 3 selects the timeout candidate from the
+  result's latency summary, independently of the diagnosis class and
+  readiness. The plan carries the timeout and expires with the diagnosis.
+- **Eligibility:** a request gets the timeout when it started in `Enforce`, a
+  closed breaker admitted it, its caller has not canceled it through its
+  context or `Cancel` channel, and any caller deadline is later than the
+  timeout would be. A retry gets it again when the caller's deadline still
+  allows. Breaker probes, writes, other method classes, and the overflow
+  aggregate never get one.
+- **Application:** the base transport receives a shallow copy of the request
+  with a context derived from the caller's. When the timeout elapses first,
+  Curo cancels that context with a private cause. The timeout is cooperative,
+  so the attempt ends when the base transport honors the cancellation.
+- **Settlement:** exactly one of the timer and the returning attempt settles
+  the attempt, under the attempt's lock. When the timer won, `RoundTrip`
+  returns `ErrTimeout`, closes any late response, and never retries. When a
+  caller cancellation reached the context first, the base result is returned
+  unchanged. Otherwise the result is returned, and a response body is wrapped
+  so that closing it, or reading it to the end, releases the derived context.
+  A body that implements `io.Writer` keeps it and is released only on close.
+- **Evidence:** an attempt the timeout ended is a timed-out attempt with a
+  latency sample at the timeout. With the default bounds, a hung dependency
+  is cut after 2, then 7.5, then 30 seconds. Only a cut at the ceiling is a
+  dependency failure. A cut below it is only a latency sample, which does not
+  count toward readiness or failure rates.
+- **Authority:** the timer does nothing once the request's authority was
+  revoked, so a mode change, `Close`, or self-disable withdraws every timeout
+  that has not fired.
+- **Observe:** the same timeout is looked up for each request, and initial
+  attempts that take longer are counted in `ShadowTimeouts`.
+
+`ErrTimeout` reports true from `Timeout` and `Temporary`, and
+`errors.Is(ErrTimeout, context.DeadlineExceeded)` is true. `Timeouts` counts
+attempts, including retry attempts, that the timer settled.
+
+A request reads the published timeout through an atomic pointer without the
+target lock. A timed attempt allocates its derived context and cancel
+function, request copy, attempt state, timer, and timer callback: six
+allocations and 656 bytes in the benchmark. Wrapping the body allocates
+nothing. A request without a timeout allocates nothing for it, and
+`WithTimeoutBounds(0, 0)` keeps every request on that path. Per-route
+timeouts, body-phase bounds, and write timeouts remain deferred.
 
 ### 15.4 Diagnosis-to-Control Matrix
 
 | Diagnosis | Retry | Breaker | Timeout |
 | --------- | ----- | ------- | ------- |
-| `Healthy` | No | No | Baseline only |
-| `Transient` | Budgeted candidate | Usually no | Candidate |
-| `DependencyDown` | Probe only | Open candidate | No extension |
-| `Saturation` | Normally no | No, report only | No extension |
-| `ClientError` | No | No | No |
-| `Degrading` | Limited candidate | Watch or open | Candidate |
+| `Healthy` | No | No | From latency |
+| `Transient` | Budgeted candidate | Usually no | From latency |
+| `DependencyDown` | Probe only | Open candidate | From latency |
+| `Saturation` | Normally no | No, report only | From latency |
+| `ClientError` | No | No | From latency |
+| `Degrading` | Limited candidate | Watch or open | From latency |
 
 Every cell describes eligibility, not a guaranteed action. A breaker closes
-only through a probe, never through a diagnosis.
+only through a probe, never through a diagnosis. The timeout candidate does
+not depend on the diagnosis: a target selects it, under any class or none,
+whenever its latency evidence selects a timeout.
 
-Policy version 2 implements only the retry candidate for `Transient` and the
-breaker-open candidate for `DependencyDown`, each gated on `Ready` evidence.
-Probing and closing are breaker transitions rather than candidates. Watch,
-limited-retry, and timeout candidates are not implemented. `Enforce` applies
-the retry candidate through the retry budget rules above and the breaker-open
-candidate through the dependency breaker.
+Policy version 3 implements the retry candidate for `Transient` and the
+breaker-open candidate for `DependencyDown`, each gated on `Ready` evidence,
+and the timeout candidate. Probing and closing are breaker transitions rather
+than candidates. Watch and limited-retry candidates are not implemented.
+`Enforce` applies the retry candidate through the retry budget rules above,
+the breaker-open candidate through the dependency breaker, and the timeout
+candidate through the adaptive timeout.
 
 ## 16. Observability and Privacy
 
@@ -1121,11 +1295,12 @@ Each proposed or applied action includes bounded fields:
 
 `Transport.Report` implements a pull-based subset. Each decision carries its
 evaluation and expiry times, normalized target identity, readiness, diagnosis,
-ordered reason codes, recent and historical evidence summaries, policy
-version, and candidates. Mode, applied state, and per-request budget decisions
-are not recorded yet; retries and dependency breaker transitions are visible
-only through aggregate `Stats` counters. The diagnosis and plan share one
-expiry.
+ordered reason codes, recent and historical evidence summaries, latency
+summary, policy version, candidates, and adaptive timeout. Mode, applied
+state, and per-request budget decisions are not recorded yet; retries,
+dependency breaker transitions, and adaptive timeouts that ended attempts are
+visible only through aggregate `Stats` counters. The diagnosis and plan share
+one expiry.
 
 ### 16.2 Excluded Data
 
@@ -1184,14 +1359,17 @@ arbitrary callback, Curo cannot preempt an implementation that blocks forever.
   error.
 - Retry budget denials.
 - Dependency breaker openings, probes, and fail-fast rejections.
+- Attempts ended by an adaptive timeout, and `Observe` attempts that took
+  longer than the adaptive timeout `Enforce` would have applied.
 - Contained internal failure count.
 - Sticky self-disable state.
 
 The snapshot contains no target identifiers or per-target evidence. Its fields
 are sampled independently under concurrency. Overflow never exceeds observed
 requests, retry successes never exceed retry attempts, retry attempts plus
-budget denials never exceed observed requests, and self-disabled state implies
-at least three contained failures.
+budget denials never exceed observed requests, shadow timeouts never exceed
+observed requests, and self-disabled state implies at least three contained
+failures.
 Per-target decisions are available through `Transport.Report`; callbacks and
 logging sinks remain deferred.
 
@@ -1207,14 +1385,17 @@ logging sinks remain deferred.
   order. Sequence numbers start at 1 and are contiguous within one transport,
   so a gap between reads means older changes were overwritten.
 
-A change is recorded when an evaluation selects a different candidate set, or
-the same non-empty set for a different diagnosis class. Renewing an unchanged
-decision is not a change. The journal is not a target lifecycle log: eviction,
-staleness, and dependency breaker transitions are not recorded. Candidates
-that lapse while a target is idle are cleared, and the change recorded, at its
-next dependency-relevant completion. A probe that closes a breaker clears the
-target's candidates at once and records that change. A change can name a
-target that has since been replaced.
+A change is recorded when an evaluation selects a different candidate set or
+a different adaptive timeout, or the same retry or breaker-open selection for
+a different diagnosis class. The timeout candidate does not depend on the
+diagnosis, so a new class with no other candidate is not a change. Renewing an
+unchanged decision is not a change. The journal is not a target lifecycle
+log: eviction, staleness, and dependency breaker transitions are not
+recorded. Candidates that lapse while a target is idle are cleared, and the
+change recorded, at its next dependency-relevant completion, or at its next
+request when its plan selected an adaptive timeout. A probe that closes a
+breaker clears the target's candidates at once and records that change. A
+change can name a target that has since been replaced.
 
 Report never evaluates evidence or reads the clock. An idle target keeps its
 last decision, so consumers compare `ExpiresAt` with the current time. The
@@ -1258,9 +1439,10 @@ continue using it after any construction error.
 
 Mode changes are atomic. They affect requests that have not yet taken their
 mode snapshot. An effective change also withdraws every retry that has not
-started, as described for the mode gate, and prevents in-flight requests from
-opening a dependency breaker. Breaker state persists across mode changes, and
-a probe already sent still settles its breaker.
+started and every adaptive timeout that has not fired, as described for the
+mode gate, and prevents in-flight requests from opening a dependency breaker.
+Breaker state persists across mode changes, and a probe already sent still
+settles its breaker.
 
 `Off` stops new observation but does not synchronously erase state. State ages
 normally and is invalidated by freshness checks.
@@ -1290,10 +1472,11 @@ Close is idempotent:
 
 In-flight requests use their captured snapshots and results. A retry that has
 not started is withdrawn, and its request returns its first result. An
-in-flight request can no longer open a dependency breaker, but an in-flight
-probe still settles one. After close, new requests use direct pass-through,
-so no breaker rejects them, mode changes return `ErrClosed`, and the
-configured mode, aggregate statistics, and decision report remain readable.
+adaptive timeout that has not fired is withdrawn too. An in-flight request can
+no longer open a dependency breaker, but an in-flight probe still settles one.
+After close, new requests use direct pass-through, so no breaker rejects them,
+mode changes return `ErrClosed`, and the configured mode, aggregate
+statistics, and decision report remain readable.
 Close retains the bounded observer state so an in-flight postflight can finish
 safely.
 
@@ -1320,8 +1503,16 @@ safely.
 | Rejected request body close panic | Count, return `ErrBreakerOpen` |
 | Probe lease expires without a result | Count a failed probe, reopen with a longer cooldown |
 | Mode change, close, or self-disable before a dependency failure is processed | Do not open the breaker |
+| Adaptive timeout start Curo panic | Count, send the original request untimed |
+| Adaptive timeout callback Curo panic | Count, the attempt continues without its timeout |
+| Timed attempt settlement Curo panic | Count, return the captured result, release its derived context as usual |
+| Mode change, close, or self-disable before an adaptive timeout fires | Withdraw the timeout |
+| Adaptive timeout fires before response headers | Cancel the attempt's derived context, return `ErrTimeout` when the base transport returns |
+| Base transport ignores the canceled context | Wait for it, return `ErrTimeout`, close any late response |
 | Caller context done | Stop waits and attempts |
 | Base transport panic | Preserve host transport semantics |
+| Base transport panic during a timed attempt | Stop the timer, release the derived context, let the panic continue |
+| Timer stop Curo panic after a base transport panic | Count, release the derived context, let the transport's panic continue |
 | Runtime fatal or OOM | Outside recoverable guarantee |
 
 Failures do not create success-shaped fallback values.
@@ -1333,11 +1524,11 @@ The first implementation must meet these structural targets:
 | Area | Target |
 | ---- | ------ |
 | Off path | No Curo allocation, lock, or goroutine |
-| Request execution | No request-scoped goroutine |
+| Request execution | No request-scoped goroutine, except the runtime goroutine that runs an expiring adaptive timeout's callback |
 | Instance workers | At most one core maintenance worker |
 | Registry memory | Linear only in configured fixed capacity |
 | Per-target memory | Fixed after target admission |
-| Canonical target hit and observation update | No heap allocation after warm admission |
+| Canonical target hit and observation update | No heap allocation after warm admission, except for a request with an adaptive timeout |
 | I/O boundary | No Curo lock held |
 | Retry attempts | Hard bounded per request and by budgets |
 | Metric labels | Closed or capacity-bounded |
@@ -1346,17 +1537,18 @@ Latency and allocation benchmarks compare Curo modes with the same base
 transport. The initial harness establishes a local baseline; numerical
 regression gates wait for a repeatable CI benchmark environment.
 
-The observer, diagnoser, policy, retry budget, and dependency breaker store
-9,520 bytes of bounded target state on 64-bit platforms. The 128 regular
-targets plus overflow aggregate therefore use about 1.17 MiB, and the
-256-entry change journal adds 38,928 bytes, excluding bounded map and key
-overhead. A report allocates detached copies of at most 128 decisions and 256
-changes.
+The observer, diagnoser, policy, retry budget, dependency breaker, and
+adaptive timeout store 10,000 bytes of bounded target state on 64-bit
+platforms. The 128 regular targets plus overflow aggregate therefore use
+about 1.23 MiB, and the 256-entry change journal adds 45,072 bytes, excluding
+bounded map and key overhead. A report allocates detached copies of at most
+128 decisions and 256 changes.
 Benchmarks cover Off, warm Observe, and warm Enforce paths with an already
-canonical target and no retry, plus a request rejected by an open dependency
-breaker; all four perform zero Curo heap allocations per request with the
-benchmark base transport. Inputs that require case or IP normalization may use
-bounded transient allocation.
+canonical target, no retry, and no adaptive timeout, plus a request rejected
+by an open dependency breaker; all four perform zero Curo heap allocations per
+request with the benchmark base transport. A warm `Enforce` read with an
+adaptive timeout performs six allocations totaling 656 bytes. Inputs that
+require case or IP normalization may use bounded transient allocation.
 
 ## 20. Security Considerations
 
@@ -1371,6 +1563,9 @@ The engine mitigates:
 - Request duplication through replay eligibility and stage-aware containment.
 - Race failures through synchronized ownership and mandatory race tests.
 - Callback panics through guarded host boundaries.
+- Goroutine and connection exhaustion by a dependency that stops answering,
+  through adaptive timeouts on reads. A dependency that answers slowly on
+  purpose can raise its target's timeout only up to the ceiling.
 
 Curo does not prevent SSRF already present in application request
 construction. It must not change a request destination or make a new class of
@@ -1392,6 +1587,7 @@ Model:
 - Dependency breaker.
 - Registry admission and expiry.
 - Retry budget reservation and rollback.
+- Adaptive timeout settlement.
 
 Assert illegal transitions cannot occur.
 
@@ -1408,8 +1604,8 @@ Inject a panic or error at every Curo-owned boundary and assert:
 ### 21.4 Race and Concurrency Tests
 
 Exercise mode changes, close, registry admission, observation updates,
-readiness, diagnosis, budget reservation, and breaker probes under
-`go test -race`.
+readiness, diagnosis, budget reservation, breaker probes, and adaptive
+timeouts expiring while attempts return under `go test -race`.
 
 ### 21.5 Fuzzing
 
@@ -1445,6 +1641,7 @@ Benchmark:
 - Off pass-through.
 - Observe on an admitted target.
 - Enforce without an action.
+- Enforce read with an adaptive timeout.
 - Fail-fast rejection by an open dependency breaker.
 - Retry budget acquisition.
 - Registry hit, miss, overflow, and expiry.
@@ -1455,7 +1652,7 @@ Benchmark:
 The recommended adoption sequence is:
 
 1. Install with the default `Observe` mode.
-2. Review diagnoses and proposed actions.
+2. Review diagnoses, proposed actions, and `ShadowTimeouts`.
 3. Confirm target cardinality and resource bounds.
 4. Enable `Enforce` on a limited application population.
 5. Compare error rate, latency, retries, and Curo internal faults.
@@ -1473,6 +1670,9 @@ The initial contract is:
 - One `Transport` binds one host-owned `http.RoundTripper`.
 - `Transport` implements `http.RoundTripper` and `io.Closer`.
 - `WithMode` selects the initial mode; `Observe` is the default.
+- `WithTimeoutBounds` sets the floor and ceiling of adaptive timeouts, 2 and
+  30 seconds by default. Zero for both disables adaptive timeouts. Otherwise
+  the floor must be positive and must not exceed the ceiling.
 - `Mode` and `SetMode` are safe for concurrent use.
 - `Stats` returns privacy-safe aggregate counters and self-disable state. It is
   safe for concurrent use and remains readable after close.
@@ -1485,7 +1685,8 @@ The initial contract is:
   `ErrClosed`.
 - Optional Curo-owned request stages run only in guarded preflight and
   postflight partitions. The wrapped transport call is never inside that
-  recovery boundary.
+  recovery boundary. The timer callback of an adaptive timeout runs during
+  the call, inside its own recovery boundary.
 - A preflight stage failure delegates the untouched original request exactly
   once. A postflight stage failure returns the already captured response and
   error without another attempt.
@@ -1500,17 +1701,19 @@ The initial contract is:
   concurrent use, and remains readable after close, in `Off`, and after
   self-disable. A Curo failure while building it returns an empty `Report`.
 - Decisions expose normalized target identity, readiness, diagnosis, ordered
-  reason codes, recent and historical evidence summaries, policy version,
-  candidates, and evaluation and expiry times. Report enums are closed, and
-  their `String` methods return stable names. Only `Enforce` applies
-  candidates: `CandidateRetry` through retries and `CandidateBreakerOpen`
-  through dependency breakers.
+  reason codes, recent and historical evidence summaries, a latency summary,
+  policy version, candidates, the adaptive timeout, and evaluation and expiry
+  times. Report enums are closed, and their `String` methods return stable
+  names. Only `Enforce` applies candidates: `CandidateRetry` through retries,
+  `CandidateBreakerOpen` through dependency breakers, and `CandidateTimeout`
+  through adaptive timeouts.
 - Target state is bounded to 128 regular identities and one non-actionable
   overflow aggregate. Paths, queries, headers, bodies, URL user information,
   and raw error text are not retained.
-- In `Off` and `Observe`, and in `Enforce` when no breaker rejects the request
-  and no retry starts, `RoundTrip` passes the original request to the base
-  exactly once and preserves its response, error, and panic behavior.
+- In `Off` and `Observe`, and in `Enforce` when no breaker rejects the
+  request, no adaptive timeout applies, and no retry starts, `RoundTrip`
+  passes the original request to the base exactly once and preserves its
+  response, error, and panic behavior.
 - In `Enforce`, a replay-safe request whose initial attempt failed with a
   transport error, or with a 502, 503, or 504 response without `Retry-After`,
   may be retried once as a clone after a cancellable 25 to 100 millisecond
@@ -1521,7 +1724,8 @@ The initial contract is:
   A started retry's response, error, or panic is the result, and the
   discarded first response body is closed.
 - A mode change, close, or self-disable withdraws a retry that has not
-  started, and the request returns its first result untouched.
+  started, and the request returns its first result. It also withdraws an
+  adaptive timeout that has not fired.
 - In `Enforce`, a target's dependency breaker opens when a request's own
   dependency failure meets a current decision that selects
   `CandidateBreakerOpen`. While it is open, `RoundTrip` closes the request
@@ -1531,20 +1735,33 @@ The initial contract is:
   response other than 429 or 5xx closes the breaker.
 - `Off`, `Observe`, closed, and self-disabled transports never reject a
   request with `ErrBreakerOpen`, and a Curo failure never causes a rejection.
+- In `Enforce`, a read request to a target whose current decision selects
+  `CandidateTimeout`, other than a probe, waits at most the decision's
+  `Timeout` for response headers, unless the caller's deadline comes first.
+  The base transport receives a shallow copy of the request with a derived
+  context, which Curo cancels when the timeout expires. `RoundTrip` then
+  returns a nil response and `ErrTimeout`, closes any late response, and does
+  not retry. Otherwise the response body is wrapped. Closing it releases the
+  derived context, and so does reading it to the end unless it implements
+  `io.Writer`, which the wrapper keeps. `ErrTimeout` reports true from
+  `Timeout` and matches `context.DeadlineExceeded`.
+- `Off`, `Observe`, closed, and self-disabled transports never end an attempt
+  with `ErrTimeout`, and a Curo failure never causes one.
 - `Stats` counts retry attempts, retry successes, retry budget denials,
-  breaker openings, breaker probes, and breaker rejections.
+  breaker openings, breaker probes, breaker rejections, adaptive timeouts in
+  `Enforce`, and shadow timeouts in `Observe`.
 
 The following surfaces remain deferred until their implementations exist:
 
-- Public route classification, latency evidence, and detailed per-target
-  evidence access.
+- Public route classification, detailed latency evidence, and detailed
+  per-target evidence access.
 - Replay opt-in for unsafe methods.
 - Callback or logging delivery of decisions and candidate changes.
 - Mode, applied-action, budget, and breaker-state fields in decision records.
 - Detailed internal-failure events and logging sinks.
 - Internal-failure error types.
 - Self-disable reset.
-- Capacity, expiry, window, budget, breaker, and timeout options.
+- Capacity, expiry, window, budget, breaker, and other timeout options.
 
 Each deferred surface requires API review alongside the code that gives it
 meaning.

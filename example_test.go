@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"time"
 
 	"github.com/raj1kshtz/curo"
 )
@@ -31,6 +32,34 @@ func ExampleNew() {
 	// true
 	// true
 	// 0
+}
+
+func ExampleWithTimeoutBounds() {
+	transport, err := curo.New(
+		http.DefaultTransport,
+		curo.WithMode(curo.Enforce),
+		curo.WithTimeoutBounds(time.Second, 10*time.Second),
+	)
+	if err != nil {
+		fmt.Println("setup failed")
+		return
+	}
+	defer func() {
+		_ = transport.Close()
+	}()
+
+	fmt.Println(transport.Mode() == curo.Enforce)
+	fmt.Println(transport.Stats().Timeouts)
+
+	_, err = curo.New(
+		http.DefaultTransport,
+		curo.WithTimeoutBounds(10*time.Second, time.Second),
+	)
+	fmt.Println(err != nil)
+	// Output:
+	// true
+	// 0
+	// true
 }
 
 func ExampleTransport_Report() {

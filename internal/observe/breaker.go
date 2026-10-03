@@ -79,18 +79,19 @@ func (target *target) admit(
 	return target.breaker.Admit(tick, eligible)
 }
 
-// settleLocked applies a probe's outcome. When the probe closes the breaker,
-// everything recorded before the close leaves the recent window, so opening
-// again needs fresh evidence. The immediate evaluation replaces a published
-// plan that still selects CandidateBreakerOpen.
+// settleLocked applies a probe's outcome and reports whether the probe closed
+// the breaker. Closing it moves everything recorded before the close out of
+// the recent window, so opening again needs fresh evidence, and evaluates the
+// target at once to replace a published plan that still selects
+// CandidateBreakerOpen.
 func (target *target) settleLocked(
 	lease uint64,
 	signal diagnosisSignal,
 	tick int64,
-) {
+) bool {
 	if target.retired ||
 		!target.breaker.Settle(lease, probeOutcome(signal), tick) {
-		return
+		return false
 	}
 
 	target.engaged.Store(false)
@@ -104,6 +105,7 @@ func (target *target) settleLocked(
 		fence/int64(observationBucketWidth)+1,
 	)
 	target.evaluateDiagnosisLocked(fence)
+	return true
 }
 
 // mayTripLocked reports whether an attempt that a closed breaker admitted may
@@ -149,10 +151,12 @@ func (target *target) selectsLocked(
 
 // probeOutcome maps a probe's diagnosis signal to breaker evidence. Any answer
 // other than a rate limit or a dependency failure shows that the dependency
-// is serving requests, including a client error such as 404.
+// is serving requests, including a client error such as 404. A probe has no
+// adaptive timeout, so it is never latency-only; that signal would prove
+// nothing either way.
 func probeOutcome(signal diagnosisSignal) breaker.Outcome {
 	switch signal {
-	case diagnosisCallerOwned:
+	case diagnosisCallerOwned, diagnosisLatencyOnly:
 		return breaker.Inconclusive
 	case diagnosisRateLimited, diagnosisDependencyFailure:
 		return breaker.Failed

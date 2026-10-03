@@ -241,8 +241,11 @@ func TestReportConversionsUseExplicitMappings(t *testing.T) {
 		0:                           0,
 		policy.CandidateRetry:       CandidateRetry,
 		policy.CandidateBreakerOpen: CandidateBreakerOpen,
+		policy.CandidateTimeout:     CandidateTimeout,
 		policy.CandidateRetry | policy.CandidateBreakerOpen: CandidateRetry |
 			CandidateBreakerOpen,
+		policy.CandidateBreakerOpen | policy.CandidateTimeout: CandidateBreakerOpen |
+			CandidateTimeout,
 		policy.Candidate(0x80): 0,
 	}
 	for internal, want := range candidates {
@@ -282,19 +285,25 @@ func newClockedTransport(
 	t testing.TB,
 	base http.RoundTripper,
 	now func() time.Time,
+	options ...Option,
 ) *Transport {
 	t.Helper()
 
-	transport, err := New(base)
+	transport, err := New(base, options...)
 	if err != nil {
 		t.Fatalf("New() error = %v", err)
 	}
-	observer := observe.NewWithClock(now)
+	cfg, err := applyOptions(options)
+	if err != nil {
+		t.Fatalf("applyOptions() error = %v", err)
+	}
+	observer := observe.NewWithClock(now, cfg.timeouts)
 	transport.observer = observer
 	transport.stages = newAdaptiveStages(
 		observer,
 		&transport.retries,
 		&transport.breakers,
+		&transport.timeouts,
 		transport.authorized,
 	)
 	transport.reports = observer.Report

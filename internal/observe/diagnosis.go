@@ -6,6 +6,7 @@ import (
 
 	"github.com/raj1kshtz/curo/internal/diagnose"
 	"github.com/raj1kshtz/curo/internal/policy"
+	"github.com/raj1kshtz/curo/internal/timeout"
 )
 
 const (
@@ -30,6 +31,12 @@ type diagnosisState struct {
 	lastRelevant int64
 	hasRelevant  bool
 	initialized  bool
+
+	// provisional reports that the published evaluation ran when a request
+	// started, to renew the target's timeout. The next relevant result then
+	// evaluates again, so the diagnosis takes in that result as soon as it
+	// would have without the earlier evaluation.
+	provisional bool
 }
 
 type publication struct {
@@ -48,17 +55,24 @@ type windowAccumulator struct {
 	hasExpiry       bool
 }
 
+// recordDiagnosisLocked records value in the baseline and reports whether the
+// target must evaluate it. A relevant result is due when the published
+// evaluation is missing, provisional, not ready, or expired. Any latency
+// sample is due when it raises the published timeout.
 func (target *target) recordDiagnosisLocked(
 	tick int64,
 	value observation,
-) {
+) bool {
 	if !target.actionable || target.retired {
-		return
+		return false
 	}
 
 	target.recordBaselineLocked(tick, value)
-	if value.signal == diagnosisCallerOwned {
-		return
+	switch value.signal {
+	case diagnosisCallerOwned:
+		return false
+	case diagnosisLatencyOnly:
+		return target.raisesTimeoutLocked(value)
 	}
 
 	target.diagnosis.hasRelevant = true
@@ -66,13 +80,46 @@ func (target *target) recordDiagnosisLocked(
 		target.diagnosis.lastRelevant = tick
 	}
 
-	evaluationTick := target.diagnosis.lastRelevant
-	if !target.diagnosis.initialized ||
+	return !target.diagnosis.initialized ||
+		target.diagnosis.provisional ||
 		target.diagnosis.result.Readiness == diagnose.ReadinessCold ||
 		target.diagnosis.result.Readiness == diagnose.ReadinessStale ||
-		evaluationTick >= target.diagnosis.result.ExpiresAt {
-		target.evaluateDiagnosisLocked(evaluationTick)
+		target.diagnosis.lastRelevant >= target.diagnosis.result.ExpiresAt ||
+		target.raisesTimeoutLocked(value)
+}
+
+// evaluateRecordedLocked evaluates the target for a value that
+// recordDiagnosisLocked reported due. A relevant result evaluates at the
+// latest relevant tick. A latency-only sample evaluates only to raise the
+// timeout. It evaluates late enough to include the sample and to replace the
+// published evaluation, which stays provisional, so the next relevant result
+// still evaluates the target as it would have without this evaluation.
+func (target *target) evaluateRecordedLocked(tick int64, value observation) {
+	if value.signal.relevant() {
+		target.evaluateDiagnosisLocked(target.diagnosis.lastRelevant)
+		return
 	}
+
+	target.evaluateDiagnosisLocked(max(
+		tick,
+		target.diagnosis.lastRelevant,
+		target.diagnosis.result.EvaluatedAt,
+	))
+	target.diagnosis.provisional = true
+}
+
+// raisesTimeoutLocked reports whether value is a latency sample slow enough
+// to raise the published timeout. Evaluating at once applies the higher
+// timeout to the next request rather than after the plan expires.
+func (target *target) raisesTimeoutLocked(value observation) bool {
+	limit := target.diagnosis.plan.Timeout
+	return value.hasLatency &&
+		limit > 0 &&
+		timeout.Select(
+			timeout.MinimumSamples,
+			bucketUpperBound(value.latencyBucket),
+			target.timeouts,
+		) > limit
 }
 
 func (target *target) recordBaselineLocked(
@@ -93,7 +140,7 @@ func (target *target) recordBaselineLocked(
 	if value.hasLatency {
 		increment(&bucket.latency[value.latencyBucket])
 	}
-	if value.signal != diagnosisCallerOwned {
+	if value.signal.relevant() {
 		recordTick(
 			tick,
 			&bucket.firstRelevantTick,
@@ -170,7 +217,7 @@ func (target *target) evaluateDiagnosisLocked(tick int64) {
 		return
 	}
 
-	plan := policy.Evaluate(candidate)
+	plan := policy.Evaluate(candidate, target.timeouts)
 	if candidatesChanged(target.diagnosis, candidate, plan) {
 		target.changes.record(target.key, candidate, plan)
 	}
@@ -178,36 +225,87 @@ func (target *target) evaluateDiagnosisLocked(tick int64) {
 	target.diagnosis.result = candidate
 	target.diagnosis.plan = plan
 	target.diagnosis.initialized = true
+	target.diagnosis.provisional = false
+	target.publishTimeoutLocked()
 }
 
-// candidatesChanged reports a different candidate set, or the same non-empty
-// set justified by a different diagnosis. Renewals are not changes.
+// publishTimeoutLocked mirrors the published plan's timeout for lock-free
+// reads by Timeout.
+func (target *target) publishTimeoutLocked() {
+	plan := target.diagnosis.plan
+	if plan.Candidates&policy.CandidateTimeout == 0 {
+		if target.timeout.Load() != nil {
+			target.timeout.Store(nil)
+		}
+		return
+	}
+
+	target.timeout.Store(&publishedTimeout{
+		limit:     plan.Timeout,
+		expiresAt: plan.ExpiresAt,
+	})
+}
+
+// timeoutAt returns the timeout that the target's plan selects at tick,
+// evaluating again first when the plan expired. That evaluation is
+// provisional, because the request it runs for has no result yet.
+func (target *target) timeoutAt(tick int64) time.Duration {
+	target.mu.Lock()
+	defer target.mu.Unlock()
+
+	if target.retired {
+		return 0
+	}
+	if tick >= target.diagnosis.plan.ExpiresAt {
+		target.evaluateDiagnosisLocked(max(tick, target.diagnosis.lastRelevant))
+		target.diagnosis.provisional = true
+	}
+	if !target.selectsLocked(policy.CandidateTimeout, tick) {
+		return 0
+	}
+
+	return target.diagnosis.plan.Timeout
+}
+
+// candidatesChanged reports a different candidate set or timeout, or the same
+// set of diagnosis candidates justified by a different diagnosis. Renewals
+// are not changes. CandidateTimeout alone does not depend on the diagnosis,
+// so a new diagnosis without other candidates is not a change either.
 func candidatesChanged(
 	previous diagnosisState,
 	result diagnose.Result,
 	plan policy.Plan,
 ) bool {
-	if plan.Candidates != previous.plan.Candidates {
+	if plan.Candidates != previous.plan.Candidates ||
+		plan.Timeout != previous.plan.Timeout {
 		return true
 	}
 
-	return plan.Candidates != 0 && result.Class != previous.result.Class
+	return plan.Candidates&^policy.CandidateTimeout != 0 &&
+		result.Class != previous.result.Class
 }
 
 func (target *target) snapshotLocked(tick int64) diagnose.Snapshot {
-	var recent windowAccumulator
+	var (
+		recent  windowAccumulator
+		latency latencySummary
+	)
 	currentEpoch := tick / int64(observationBucketWidth)
 	firstEpoch := currentEpoch - observationBucketCount + 1
 	// Closing the dependency breaker fences everything recorded before the
-	// close out of the recent window. The historical cutoff is unchanged.
+	// close out of the recent window. The historical cutoff is unchanged, and
+	// the latency summary keeps every retained sample.
 	recentFirst := max(firstEpoch, target.recentFloor)
 	for index := range target.buckets {
 		bucket := &target.buckets[index]
-		if bucket.epoch < recentFirst || bucket.epoch > currentEpoch {
+		if bucket.epoch < max(firstEpoch, 0) || bucket.epoch > currentEpoch {
 			continue
 		}
 
-		recent.addEvidenceBucket(bucket)
+		latency.add(&bucket.latency)
+		if bucket.epoch >= recentFirst {
+			recent.addEvidenceBucket(bucket)
+		}
 	}
 	recent.finish()
 
@@ -225,6 +323,7 @@ func (target *target) snapshotLocked(tick int64) diagnose.Snapshot {
 			}
 
 			historical.addBaselineBucket(bucket)
+			latency.add(&bucket.latency)
 		}
 	}
 	historical.finish()
@@ -234,7 +333,42 @@ func (target *target) snapshotLocked(tick int64) diagnose.Snapshot {
 		Historical:      historical.window,
 		Now:             tick,
 		RecentExpiresAt: recent.expiresAt,
+		Latency:         latency.summary(),
 		EverRelevant:    target.diagnosis.hasRelevant,
+	}
+}
+
+// latencySummary accumulates retained latency buckets for the adaptive
+// timeout.
+type latencySummary struct {
+	samples uint64
+
+	// slowest is one more than the index of the slowest non-empty bucket, or
+	// zero without samples.
+	slowest uint8
+}
+
+func (summary *latencySummary) add(
+	latency *[len(latencyUpperBounds) + 1]uint64,
+) {
+	for index, count := range latency {
+		if count == 0 {
+			continue
+		}
+
+		addCounter(&summary.samples, count)
+		summary.slowest = max(summary.slowest, uint8(index)+1)
+	}
+}
+
+func (summary latencySummary) summary() diagnose.Latency {
+	if summary.slowest == 0 {
+		return diagnose.Latency{}
+	}
+
+	return diagnose.Latency{
+		Samples: summary.samples,
+		Slowest: bucketUpperBound(summary.slowest - 1),
 	}
 }
 
@@ -275,7 +409,7 @@ func (accumulator *windowAccumulator) addSignals(
 	signals [diagnosisSignalCount]uint64,
 ) {
 	for signal, count := range signals {
-		if diagnosisSignal(signal) != diagnosisCallerOwned {
+		if diagnosisSignal(signal).relevant() {
 			addCounter(&accumulator.window.RelevantAttempts, count)
 		}
 	}

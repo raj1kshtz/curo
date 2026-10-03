@@ -5,6 +5,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/raj1kshtz/curo/internal/timeout"
 )
 
 const (
@@ -18,6 +20,8 @@ type registry struct {
 	changes  *journal
 	shards   []registryShard
 
+	// timeouts bounds the adaptive timeouts of regular read targets.
+	timeouts timeout.Bounds
 	capacity int64
 	idleTTL  int64
 	tracked  atomic.Int64
@@ -107,6 +111,11 @@ func (registry *registry) admitLocked(
 	admitted := newTarget(tick, true)
 	admitted.key = key.retained()
 	admitted.changes = registry.changes
+	// Only reads are bounded. A write cut short may still take effect, and
+	// the caller could not tell.
+	if admitted.key.method == MethodRead {
+		admitted.timeouts = registry.timeouts
+	}
 	shard.targets[admitted.key] = admitted
 
 	return admitted

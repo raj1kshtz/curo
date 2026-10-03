@@ -11,6 +11,7 @@ import (
 
 	"github.com/raj1kshtz/curo/internal/breaker"
 	"github.com/raj1kshtz/curo/internal/retry"
+	"github.com/raj1kshtz/curo/internal/timeout"
 )
 
 const (
@@ -51,6 +52,7 @@ type timeoutSource uint8
 const (
 	timeoutCaller timeoutSource = iota
 	timeoutTransport
+	timeoutAdaptive
 	timeoutSourceCount
 )
 
@@ -65,8 +67,19 @@ const (
 	diagnosisRateLimited
 	diagnosisClientFailure
 	diagnosisDependencyFailure
+
+	// diagnosisLatencyOnly is an attempt that Curo's adaptive timeout ended
+	// below the target's ceiling. Its latency is evidence, but its outcome
+	// says nothing about the dependency's health.
+	diagnosisLatencyOnly
 	diagnosisSignalCount
 )
+
+// relevant reports whether an attempt with signal is evidence about the
+// dependency's health. Caller cancellations and latency-only samples are not.
+func (signal diagnosisSignal) relevant() bool {
+	return signal != diagnosisCallerOwned && signal != diagnosisLatencyOnly
+}
 
 type observation struct {
 	outcome       outcome
@@ -99,6 +112,10 @@ type evidenceBucket struct {
 
 type target struct {
 	changes *journal
+
+	// timeout mirrors the published plan's adaptive timeout and expiry, or
+	// is nil when the plan selects none, so requests skip the lock.
+	timeout atomic.Pointer[publishedTimeout]
 	key     targetKey
 
 	buckets  [observationBucketCount]evidenceBucket
@@ -106,6 +123,7 @@ type target struct {
 
 	diagnosis   diagnosisState
 	breaker     breaker.Breaker
+	timeouts    timeout.Bounds
 	recentFloor int64
 	mu          sync.Mutex
 	lastSeen    atomic.Int64
@@ -117,6 +135,11 @@ type target struct {
 
 	actionable bool
 	retired    bool
+}
+
+type publishedTimeout struct {
+	limit     time.Duration
+	expiresAt int64
 }
 
 func newTarget(tick int64, actionable bool) *target {
@@ -142,12 +165,14 @@ func (target *target) touch(tick int64) {
 }
 
 // retire marks a target replaced in the registry. In-flight tokens may still
-// record evidence, but a retired target never evaluates or records changes.
+// record evidence, but a retired target never evaluates or records changes,
+// and it no longer selects a timeout.
 func (target *target) retire() {
 	target.mu.Lock()
 	defer target.mu.Unlock()
 
 	target.retired = true
+	target.timeout.Store(nil)
 }
 
 func (target *target) record(tick int64, value observation) bool {
@@ -161,9 +186,10 @@ func (target *target) record(tick int64, value observation) bool {
 
 // complete records one finished attempt and applies its breaker effects under
 // one lock. A non-zero probe lease is settled with the attempt's outcome, even
-// when the evidence itself arrived too late to record. For a dependency
-// failure that a closed breaker admitted, complete reports whether the
-// breaker may open.
+// when the evidence itself arrived too late to record. A probe that closes
+// the breaker evaluates the target after the close, so an attempt evaluates
+// the target at most once. For a dependency failure that a closed breaker
+// admitted, complete reports whether the breaker may open.
 func (target *target) complete(
 	tick int64,
 	value observation,
@@ -177,9 +203,12 @@ func (target *target) complete(
 	target.mu.Lock()
 	defer target.mu.Unlock()
 
-	recorded := target.recordLocked(tick, value)
-	if probe != 0 {
-		target.settleLocked(probe, value.signal, tick)
+	recorded, evaluate := target.recordLocked(tick, value)
+	if probe != 0 && target.settleLocked(probe, value.signal, tick) {
+		evaluate = false
+	}
+	if evaluate {
+		target.evaluateRecordedLocked(tick, value)
 	}
 	trip := admitted &&
 		value.signal == diagnosisDependencyFailure &&
@@ -188,22 +217,25 @@ func (target *target) complete(
 	return recorded, trip
 }
 
-func (target *target) recordLocked(tick int64, value observation) bool {
+// recordLocked records value and reports whether it was recorded and whether
+// the target must evaluate it.
+func (target *target) recordLocked(
+	tick int64,
+	value observation,
+) (bool, bool) {
 	epoch := tick / int64(observationBucketWidth)
 	index := int(epoch % observationBucketCount)
 
 	bucket := &target.buckets[index]
 	if bucket.epoch > epoch {
-		return false
+		return false, false
 	}
 	if bucket.epoch < epoch {
 		*bucket = evidenceBucket{epoch: epoch}
 	}
 
 	recordEvidence(bucket, tick, value)
-	target.recordDiagnosisLocked(tick, value)
-
-	return true
+	return true, target.recordDiagnosisLocked(tick, value)
 }
 
 func recordEvidence(
@@ -230,7 +262,7 @@ func recordEvidence(
 		&bucket.lastTick,
 		&bucket.hasTick,
 	)
-	if value.signal != diagnosisCallerOwned {
+	if value.signal.relevant() {
 		recordTick(
 			tick,
 			&bucket.firstRelevantTick,
@@ -286,6 +318,28 @@ func classify(result Result, contextErr error, latency time.Duration) observatio
 		value.latencyBucket = latencyBucket(latency)
 	}
 	value.signal = classifyDiagnosisSignal(value, result, contextSignals)
+
+	return value
+}
+
+// censored classifies an attempt that Curo's adaptive timeout ended. Its true
+// latency is at least limit, so it is recorded as a sample in limit's bucket,
+// which raises the next timeout. Only a cut at the target's ceiling is a
+// dependency failure. Below the ceiling, the timeout was too short to judge
+// the dependency, so the cut is only a latency sample and leaves the
+// target's failure rates unchanged.
+func censored(limit time.Duration, bounds timeout.Bounds) observation {
+	value := observation{
+		outcome:       outcomeTimedOut,
+		timeoutSource: timeoutAdaptive,
+		latencyBucket: latencyBucket(limit),
+		signal:        diagnosisLatencyOnly,
+		hasTimeout:    true,
+		hasLatency:    true,
+	}
+	if limit >= bounds.Maximum {
+		value.signal = diagnosisDependencyFailure
+	}
 
 	return value
 }
@@ -427,6 +481,16 @@ func latencyBucket(latency time.Duration) uint8 {
 	}
 
 	return uint8(len(latencyUpperBounds))
+}
+
+// bucketUpperBound returns the largest latency in bucket, or the largest
+// Duration for the bucket above every bound.
+func bucketUpperBound(bucket uint8) time.Duration {
+	if int(bucket) < len(latencyUpperBounds) {
+		return latencyUpperBounds[bucket]
+	}
+
+	return math.MaxInt64
 }
 
 func increment(value *uint64) {

@@ -1,6 +1,11 @@
 package curo
 
-import "fmt"
+import (
+	"fmt"
+	"time"
+
+	"github.com/raj1kshtz/curo/internal/timeout"
+)
 
 // Option configures a Transport during construction.
 //
@@ -10,7 +15,8 @@ type Option interface {
 }
 
 type config struct {
-	mode Mode
+	timeouts timeout.Bounds
+	mode     Mode
 }
 
 type optionFunc func(*config) error
@@ -31,8 +37,36 @@ func WithMode(mode Mode) Option {
 	})
 }
 
+// WithTimeoutBounds sets the floor and ceiling of adaptive timeouts. The
+// default floor is 2 seconds and the default ceiling is 30 seconds.
+//
+// In Enforce mode, a read request to a target with enough latency evidence
+// must receive response headers within the target's adaptive timeout: three
+// times its slowest retained latency, clamped to these bounds. Reading the
+// response body is not bounded. Set the ceiling above the longest time to
+// response headers that a read may legitimately take, because no read may
+// wait longer.
+//
+// Passing zero for both disables adaptive timeouts. Otherwise minimum must be
+// positive and must not exceed maximum.
+func WithTimeoutBounds(minimum, maximum time.Duration) Option {
+	return optionFunc(func(cfg *config) error {
+		bounds := timeout.Bounds{Minimum: minimum, Maximum: maximum}
+		if bounds != (timeout.Bounds{}) && !bounds.Enabled() {
+			return fmt.Errorf(
+				"invalid timeout bounds %v to %v: want 0 < minimum <= maximum, or both zero",
+				minimum,
+				maximum,
+			)
+		}
+
+		cfg.timeouts = bounds
+		return nil
+	})
+}
+
 func applyOptions(options []Option) (config, error) {
-	cfg := config{mode: Observe}
+	cfg := config{mode: Observe, timeouts: timeout.DefaultBounds}
 
 	for index, option := range options {
 		if option == nil {

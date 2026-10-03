@@ -25,6 +25,8 @@ together. Code and API documentation define the exact implementation.
    [Expose the Public API at the Module Root](0007-root-api-and-internal-packages.md)
 8. **ADR-0008 - Accepted**
    [Fail Fast Through Adaptive Dependency Breakers](0008-adaptive-dependency-breakers.md)
+9. **ADR-0009 - Accepted**
+   [Bound Slow Reads with Adaptive Timeouts](0009-adaptive-timeouts.md)
 
 ## Lifecycle
 

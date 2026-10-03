@@ -15,9 +15,10 @@ application to tune static thresholds.
 > transport behavior, bounded request observation, aggregate runtime
 > statistics, and a pull-based decision report. Curo evaluates readiness,
 > deterministic diagnoses, and control candidates. `Enforce` applies the retry
-> candidate, as at most one budgeted retry of a replay-safe request, and the
-> breaker candidate, by failing requests fast while a dependency is down;
-> timeout controls are not implemented.
+> candidate, as at most one budgeted retry of a replay-safe request, the
+> breaker candidate, by failing requests fast while a dependency is down, and
+> the timeout candidate, by ending a read that waits too long for response
+> headers.
 
 ## Current status
 
@@ -25,9 +26,9 @@ application to tune static thresholds.
 | ---- | ------ |
 | Architecture decisions | Accepted and documented in [`docs/adr`](docs/adr/) |
 | Engine design | Documented in [`docs/design/engine.md`](docs/design/engine.md) |
-| Public Go API | Transport, lifecycle, operating modes, aggregate statistics, decision reports, and a fail-fast error |
-| Runtime implementation | Guarded observation, diagnosis, candidate evaluation, budgeted retries, and dependency breakers around direct delegation |
-| Adaptive behavior | Readiness, diagnosis, and candidates reported; retries and dependency breakers applied in `Enforce`; timeouts pending |
+| Public Go API | Transport, lifecycle, operating modes, timeout bounds, aggregate statistics, decision reports, and fail-fast and timeout errors |
+| Runtime implementation | Guarded observation, diagnosis, candidate evaluation, budgeted retries, dependency breakers, and adaptive timeouts around direct delegation |
+| Adaptive behavior | Readiness, diagnosis, and candidates reported; retries, dependency breakers, and adaptive timeouts applied in `Enforce` |
 | Performance data | Allocation benchmarks added; regression gates pending |
 
 Public documentation is updated as features become real, rather than
@@ -56,11 +57,11 @@ concurrency, and `Close` is idempotent. The application closes the returned
 `curo.Transport` during shutdown.
 
 `Off` and `Observe` delegate the original request exactly once and return the
-base response or error unchanged, and so does `Enforce` for every request it
-neither retries nor fails fast. `Observe` and `Enforce` record completed
-initial attempts and evaluate bounded diagnoses and control candidates; `Off`,
-closed, and self-disabled transports use direct pass-through without
-collecting new evidence.
+base response or error unchanged, and so does `Enforce` for every request that
+it does not retry, fail fast, or send with an adaptive timeout. `Observe` and
+`Enforce` record completed initial attempts and evaluate bounded diagnoses and
+control candidates; `Off`, closed, and self-disabled transports use direct
+pass-through without collecting new evidence.
 
 Observation keys include only a normalized HTTP or HTTPS scheme, bounded
 hostname, effective port, and closed method class. Paths, queries, URL user
@@ -98,6 +99,11 @@ fmt.Printf(
     stats.BreakerProbes,
     stats.BreakerRejections,
 )
+fmt.Printf(
+    "timeouts=%d shadow_timeouts=%d\n",
+    stats.Timeouts,
+    stats.ShadowTimeouts,
+)
 ```
 
 `Stats` intentionally does not expose target identities or diagnoses.
@@ -108,12 +114,13 @@ Per-target decisions and recent candidate changes are available through
 report := transport.Report()
 for _, decision := range report.Targets {
     fmt.Printf(
-        "%s %s readiness=%s diagnosis=%s candidates=%s reasons=%v\n",
+        "%s %s readiness=%s diagnosis=%s candidates=%s timeout=%s reasons=%v\n",
         decision.Target.Host,
         decision.Target.Method,
         decision.Readiness,
         decision.Diagnosis,
         decision.Candidates,
+        decision.Timeout,
         decision.Reasons,
     )
 }
@@ -128,21 +135,26 @@ for _, change := range report.Changes {
 ```
 
 Completed `Observe` and `Enforce` requests, except caller-owned cancellations
-and timeouts, refresh a target's decision once the previous decision expires,
-at most ten seconds after its evaluation. `Report` copies published state
-without evaluating evidence, so an idle target keeps its last decision;
-compare `ExpiresAt` with the current time before relying on it. A tracked
-target without an evaluation appears with zero times and `Cold` readiness, and
-the overflow aggregate is never reported.
+and deadlines, refresh a target's decision once the previous decision expires,
+at most ten seconds after its evaluation. A latency sample slow enough to
+raise the current adaptive timeout refreshes the decision at once, and a read
+request that starts after a decision with a timeout expired refreshes it
+before the request is sent, so the timeout does not lapse while its evidence
+is retained. `Report` copies published state without evaluating evidence, so
+an idle target keeps its last decision; compare `ExpiresAt` with the current
+time before relying on it. A tracked target without an evaluation appears
+with zero times and `Cold` readiness, and the overflow aggregate is never
+reported.
 
-Policy version 2 selects `CandidateRetry` for a `Transient` diagnosis and
+Policy version 3 selects `CandidateRetry` for a `Transient` diagnosis and
 `CandidateBreakerOpen` for `DependencyDown`. `Saturation` is reported without
 a candidate, because a dependency that is rate limiting is still answering.
-Candidates require `Ready` evidence; a matching diagnosis without it selects
-nothing and adds `ReasonReadinessRequired`. `Changes` keeps the latest 256
-candidate changes with contiguous sequence numbers, so a gap between reads
-means older changes were overwritten. `Enforce` applies both candidates as
-described below.
+These candidates require `Ready` evidence; a matching diagnosis without it
+selects nothing and adds `ReasonReadinessRequired`. `CandidateTimeout`
+depends only on latency evidence, as described below. `Changes` keeps the
+latest 256 candidate changes with contiguous sequence numbers, so a gap
+between reads means older changes were overwritten. `Enforce` applies all
+three candidates as described below.
 
 Report targets use the same normalized identity as observation. Hostnames can
 be influenced by untrusted input when an application calls user-supplied URLs,
@@ -158,7 +170,8 @@ these hold:
   absent or reproducible through `GetBody`.
 - The initial attempt failed with a transport error, or with a 502, 503, or
   504 response without a `Retry-After` header. Caller cancellations and
-  deadlines, 429, and other statuses are never retried.
+  deadlines, attempts that the adaptive timeout ended, 429, and other
+  statuses are never retried.
 - The target's current decision includes `CandidateRetry` and has not
   expired, both after the initial attempt and again just before the retry.
 - The target's dependency breaker is closed at both of those points, and the
@@ -238,6 +251,79 @@ The breaker has known limits:
   across mode changes, so requests fail fast again if `Enforce` is restored
   before a probe closes an open breaker.
 
+In `Enforce` mode, Curo also bounds how long a read request (`GET`, `HEAD`,
+`OPTIONS`, `TRACE`, or an empty method) waits for response headers. Every
+initial attempt that returns a response is a sample of its time to response
+headers, and a target retains samples from about the last 30 minutes. Once it
+holds at least 100, the target's adaptive timeout is three times the upper
+bound of the latency bucket that holds its slowest sample, clamped to the
+timeout bounds. The buckets are fixed, so with the default bounds of 2 and 30
+seconds the timeout is 2, 3, 7.5, 15, or 30 seconds. It does not depend on
+the diagnosis or on readiness, and `Decision.Timeout` reports it.
+
+```go
+transport, err := curo.New(
+    http.DefaultTransport,
+    curo.WithMode(curo.Enforce),
+    curo.WithTimeoutBounds(time.Second, 10*time.Second),
+)
+```
+
+Set the ceiling above the longest time to response headers that a read may
+legitimately take, because no read waits longer. `WithTimeoutBounds(0, 0)`
+disables adaptive timeouts. A request whose context deadline leaves no more
+time than its timeout keeps only that deadline, and Curo never extends a
+caller's deadline.
+
+A timed request is sent as a shallow copy with a derived context, which Curo
+cancels when the timeout expires. `RoundTrip` then returns `curo.ErrTimeout`
+and closes any response that arrives too late. Check it with
+`errors.Is(err, curo.ErrTimeout)`. Like the timeout error of an
+`http.Client`, `ErrTimeout` reports true from `Timeout`, and
+`errors.Is(err, context.DeadlineExceeded)` holds. The request may have reached
+the dependency. An attempt that returns in time keeps its response, with the
+body wrapped so that closing it, or reading it to the end, releases the
+derived context. Reading the body is not bounded. The wrapper does not keep
+the body's concrete type, but a body that implements `io.Writer`, such as the
+connection of a `101 Switching Protocols` response, stays writable and
+releases the context only when closed.
+
+An attempt that the timeout ended is never retried. A retry of an attempt
+that failed in time gets the same timeout, when the caller's deadline still
+allows it. A breaker probe, a write, and any other method are never timed.
+An attempt that the timeout ended is recorded as a sample at the timeout,
+which is a lower bound of its true latency, so a dependency that slows down
+gets a longer timeout. It counts as a dependency failure only when its
+timeout was the ceiling. Below the ceiling the dependency may only be slower
+than before, so the attempt is only a latency sample and does not dilute the
+failure rates that diagnosis uses.
+
+`Observe` never ends a request. Instead, `ShadowTimeouts` in `Stats` counts
+initial attempts that took longer than the timeout `Enforce` would have
+applied, and `Timeouts` counts attempts that `Enforce` ended. A mode change,
+`Close`, or self-disable withdraws a timeout that has not fired, and `Off`,
+closed, and self-disabled transports never end a request with `ErrTimeout`.
+Only the bounds are configurable; the multiplier and the 100-sample minimum
+are fixed.
+
+The adaptive timeout has known limits:
+
+- A target covers every path on a host with the same method class, so a
+  rarely used slow path on a fast host is cut until the samples of its cuts
+  raise the timeout, one step at a time.
+- After a single slow response, the timeout stays high for up to about 30
+  minutes, until that sample ages out. A target with fewer than 100 samples
+  in that time never gets a timeout.
+- The timeout is cooperative. A base transport that ignores context
+  cancellation keeps the request waiting, and `ErrTimeout` is returned only
+  when that transport returns.
+- Breaker probes are never timed, so a probe to a hung dependency waits for
+  the caller's deadline or the base transport.
+- A request in flight loses its timeout when the mode changes, even if
+  `Enforce` is restored.
+- Timeout state belongs to one process, so replicas learn their timeouts
+  independently.
+
 The transport now separates optional Curo-owned preflight and postflight work
 from the unguarded base transport call. A preflight failure falls back to the
 original request, while a postflight or retry-preparation failure preserves
@@ -281,8 +367,8 @@ constraint is therefore host application inviolability:
 The guarded request-stage boundary, bounded observer and historical baseline,
 deterministic diagnoser, candidate policy, guarded decision report, aggregate
 internal-fault visibility, self-disable signal, budgeted replay-safe retries,
-and adaptive dependency breakers are implemented. Timeout mitigation and
-applied-action auditing remain design requirements. The full contract is
+adaptive dependency breakers, and adaptive timeouts are implemented.
+Applied-action auditing remains a design requirement. The full contract is
 recorded in [ADR-0002](docs/adr/0002-host-application-inviolability.md).
 
 ## Architecture
@@ -304,8 +390,9 @@ project governance material.
 
 The next milestones are:
 
-1. Add adaptive timeout controls with safety tests and benchmarks.
+1. Harden behavior with regression gates and failure simulations.
 2. Publish operational guidance after behavior is measured.
+3. Review API compatibility and prepare the first release.
 
 ## Contributing
 

@@ -7,6 +7,7 @@ import (
 	"math"
 	"os"
 	"reflect"
+	"sync/atomic"
 	"testing"
 	"time"
 	"unsafe"
@@ -384,6 +385,9 @@ func TestEvidenceStateCannotRetainSensitiveValues(t *testing.T) {
 	// The normalized hostname is the only retained text. It is bounded to 253
 	// bytes and cloned at admission.
 	allowedStrings := map[string]int{"targetKey.host": 0}
+	// atomic.Pointer holds its value in an unsafe.Pointer. The only one is the
+	// target's timeout mirror, so its pointee is inspected instead.
+	timeoutMirror := reflect.TypeOf(atomic.Pointer[publishedTimeout]{}).Name() + ".v"
 	visited := make(map[reflect.Type]bool)
 
 	var inspect func(reflect.Type)
@@ -407,12 +411,17 @@ func TestEvidenceStateCannotRetainSensitiveValues(t *testing.T) {
 						continue
 					}
 					allowedStrings[name]++
+				case reflect.UnsafePointer:
+					if name != timeoutMirror {
+						t.Errorf("%s can retain unbounded or sensitive values", name)
+						continue
+					}
+					inspect(reflect.TypeOf(publishedTimeout{}))
 				case reflect.Interface,
 					reflect.Map,
 					reflect.Slice,
 					reflect.Func,
-					reflect.Chan,
-					reflect.UnsafePointer:
+					reflect.Chan:
 					t.Errorf("%s can retain unbounded or sensitive values", name)
 				default:
 					inspect(field.Type)
@@ -433,6 +442,7 @@ func TestEvidenceStateCannotRetainSensitiveValues(t *testing.T) {
 		reflect.TypeOf(diagnose.Result{}),
 		reflect.TypeOf(policy.Plan{}),
 		reflect.TypeOf(breaker.Breaker{}),
+		reflect.TypeOf(publishedTimeout{}),
 	} {
 		if !visited[valueType] {
 			t.Errorf("%s was not inspected", valueType)
@@ -445,8 +455,8 @@ func TestEvidenceStateCannotRetainSensitiveValues(t *testing.T) {
 	}
 	if unsafe.Sizeof(uintptr(0)) == 8 {
 		const (
-			documentedTargetBytes  = 9_520
-			documentedJournalBytes = 38_928
+			documentedTargetBytes  = 10_000
+			documentedJournalBytes = 45_072
 		)
 		if got := unsafe.Sizeof(target{}); got != documentedTargetBytes {
 			t.Errorf(

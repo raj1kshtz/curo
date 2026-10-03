@@ -15,9 +15,10 @@ changes will always be listed here under **Changed** or **Removed**.
 - Project foundation: Apache-2.0 licence, contribution guide, code of conduct, security
   policy, governance model and CI pipeline.
 - ADR lifecycle and authoring guidance, plus Architecture Decision Records
-  `0001` through `0009` covering the embedded Go library, host application
+  `0001` through `0010` covering the embedded Go library, host application
   inviolability, adaptive policy, dependencies, operating modes, retry
-  budgets, package boundaries, dependency breakers, and adaptive timeouts.
+  budgets, package boundaries, dependency breakers, adaptive timeouts, and
+  versioning and compatibility.
 - Engine high-level design with reviewed context, component, runtime,
   containment, state-ownership, and mitigation-control diagrams.
 - Initial public transport API with explicit base ownership, validated
@@ -89,7 +90,18 @@ changes will always be listed here under **Changed** or **Removed**.
   bounds, rollout and rollback, monitoring, error handling, measured incident
   behavior, warm-up, capacity, and troubleshooting.
 - Runnable examples for exporting `Stats` through `expvar`, handling
-  `ErrBreakerOpen` and `ErrTimeout`, and changing modes at runtime.
+  `ErrBreakerOpen` and `ErrTimeout`, and changing modes at runtime by name.
+- `Transport.CloseIdleConnections`, so `http.Client.CloseIdleConnections`
+  reaches the base transport through Curo.
+- `Mode.String`, `Mode.MarshalText`, and `Mode.UnmarshalText`. Modes print and
+  encode as their names and decode from a name in any letter case, so
+  `flag.TextVar`, `encoding/json`, and admin controls can set them.
+- `MarshalText` for `MethodClass`, `Readiness`, `Diagnosis`, `Reason`, and
+  `Candidates`, so `encoding/json` encodes a `Report` with names, and
+  `Decision.Reasons` as an array of names.
+- An API gate: `TestAPI` compares the exported API with
+  `testdata/api.golden`, so every change to it appears in review.
+- CI tests Go 1.23, the minimum version, and Go 1.26 and 1.27.
 
 ### Changed
 
@@ -109,5 +121,7 @@ changes will always be listed here under **Changed** or **Removed**.
   recent window nor the historical baseline, so a target's timeout could drop
   for about a minute and then rise again.
 - The `Enforce` documentation now lists adaptive timeouts among its actions.
+- A zero or nil `Transport` now closes the request body before it returns
+  `ErrNilBaseTransport`, as `http.RoundTripper` requires.
 
 [Unreleased]: https://github.com/raj1kshtz/curo/commits/main

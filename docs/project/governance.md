@@ -40,6 +40,9 @@ exists at that time.
 Releases follow [Semantic Versioning](https://semver.org/). During `v0.x`, the
 public API may change between minor versions. Breaking changes must be
 documented in [CHANGELOG.md](../../CHANGELOG.md).
+[ADR-0010](../adr/0010-versioning-and-compatibility.md) defines what the
+compatibility promise covers, how releases are made and corrected, and which
+Go versions are supported.
 
 A release requires a green `main` branch and release notes that describe
 user-visible changes.

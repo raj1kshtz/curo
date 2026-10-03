@@ -26,12 +26,13 @@ application to tune static thresholds.
 | ---- | ------ |
 | Architecture decisions | Accepted and documented in [`docs/adr`](docs/adr/) |
 | Engine design | Documented in [`docs/design/engine.md`](docs/design/engine.md) |
-| Public Go API | Transport, lifecycle, operating modes, timeout bounds, aggregate statistics, decision reports, and fail-fast and timeout errors |
+| Public Go API | Transport, lifecycle, operating modes, timeout bounds, aggregate statistics, decision reports, fail-fast and timeout errors, and text and JSON encodings |
 | Runtime implementation | Guarded observation, diagnosis, candidate evaluation, budgeted retries, dependency breakers, and adaptive timeouts around direct delegation |
 | Adaptive behavior | Readiness, diagnosis, and candidates reported; retries, dependency breakers, and adaptive timeouts applied in `Enforce` |
 | Performance data | Benchmarks for every measured path, with exact allocation gates in CI |
 | Regression gates | Deterministic failure simulation of nine scenarios with a reviewed scorecard, and full statement coverage in CI |
 | Operational guidance | [Operations guide](docs/guides/operations.md) for wiring, deadlines, timeout bounds, rollout, monitoring, and incidents |
+| Compatibility | [Versioning and compatibility policy](docs/adr/0010-versioning-and-compatibility.md), an exported API gate, and CI on Go 1.23, 1.26, and 1.27 |
 
 Public documentation is updated as features become real, rather than
 documenting planned APIs as if they already exist.
@@ -59,7 +60,12 @@ func newHTTPClient() (*http.Client, *curo.Transport, error) {
 One `curo.Transport` binds one host-owned `http.RoundTripper`. Curo does not
 close the base transport. A nil base is rejected, mode access is safe under
 concurrency, and `Close` is idempotent. The application closes the returned
-`curo.Transport` during shutdown.
+`curo.Transport` during shutdown. `CloseIdleConnections` forwards to the base
+transport, so `http.Client.CloseIdleConnections` keeps working.
+
+Modes print and encode as their names. `Mode.UnmarshalText` accepts `off`,
+`observe`, or `enforce` in any letter case, so `flag.TextVar`, configuration
+decoders, and admin controls can set a mode from text.
 
 `Off` and `Observe` delegate the original request exactly once and return the
 base response or error unchanged, and so does `Enforce` for every request that
@@ -166,7 +172,9 @@ be influenced by untrusted input when an application calls user-supplied URLs,
 so do not use `Target.Host` as an unbounded metric label. `Report` is safe for
 concurrent use and remains readable after `Close`, in `Off` mode, and after
 self-disable. If Curo fails while building a report, it returns an empty
-report and counts the failure in `InternalFailures`.
+report and counts the failure in `InternalFailures`. A `Report` encodes to
+JSON with names for its enumerated values, so a debug endpoint can serve it
+with `encoding/json`.
 
 In `Enforce` mode, Curo retries a request at most once, and only when all of
 these hold:
@@ -396,8 +404,7 @@ operations, and project governance material.
 
 ## Implementation sequence
 
-The next milestone is to review API compatibility and prepare the first
-release.
+The next milestone is to prepare and publish the first release, `v0.1.0`.
 
 ## Contributing
 

@@ -27,6 +27,8 @@ together. Code and API documentation define the exact implementation.
    [Fail Fast Through Adaptive Dependency Breakers](0008-adaptive-dependency-breakers.md)
 9. **ADR-0009 - Accepted**
    [Bound Slow Reads with Adaptive Timeouts](0009-adaptive-timeouts.md)
+10. **ADR-0010 - Accepted**
+    [Version Releases with an Explicit Compatibility Promise](0010-versioning-and-compatibility.md)
 
 ## Lifecycle
 

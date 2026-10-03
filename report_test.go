@@ -2,6 +2,8 @@ package curo_test
 
 import (
 	"context"
+	"encoding"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"slices"
@@ -209,67 +211,161 @@ func TestReportIsSafeForConcurrentUse(t *testing.T) {
 	}
 }
 
+// TestReportValuesHaveStableNames pins the name and number of each report
+// value, which ADR-0010 makes compatibility promises.
 func TestReportValuesHaveStableNames(t *testing.T) {
 	t.Parallel()
 
+	type named interface {
+		fmt.Stringer
+		encoding.TextMarshaler
+	}
 	tests := []struct {
-		value fmt.Stringer
-		want  string
+		value  named
+		want   string
+		number uint64
 	}{
-		{value: curo.MethodRead, want: "Read"},
-		{value: curo.MethodWrite, want: "Write"},
-		{value: curo.MethodConnect, want: "Connect"},
-		{value: curo.MethodOther, want: "Other"},
-		{value: curo.MethodClass(9), want: "MethodClass(9)"},
-		{value: curo.ReadinessCold, want: "Cold"},
-		{value: curo.ReadinessWarming, want: "Warming"},
-		{value: curo.ReadinessReady, want: "Ready"},
-		{value: curo.ReadinessStale, want: "Stale"},
-		{value: curo.Readiness(9), want: "Readiness(9)"},
-		{value: curo.DiagnosisNone, want: "None"},
-		{value: curo.DiagnosisHealthy, want: "Healthy"},
-		{value: curo.DiagnosisTransient, want: "Transient"},
-		{value: curo.DiagnosisDependencyDown, want: "DependencyDown"},
-		{value: curo.DiagnosisSaturation, want: "Saturation"},
-		{value: curo.DiagnosisClientError, want: "ClientError"},
-		{value: curo.DiagnosisDegrading, want: "Degrading"},
-		{value: curo.Diagnosis(9), want: "Diagnosis(9)"},
-		{value: curo.Reason(0), want: "Reason(0)"},
-		{value: curo.ReasonNoEvidence, want: "NoEvidence"},
-		{value: curo.ReasonEvidenceStale, want: "EvidenceStale"},
-		{value: curo.ReasonInsufficientEvidence, want: "InsufficientEvidence"},
-		{value: curo.ReasonRecentEvidenceReady, want: "RecentEvidenceReady"},
-		{value: curo.ReasonHistoricalBaselineReady, want: "HistoricalBaselineReady"},
-		{value: curo.ReasonInsufficientRecentEvidence, want: "InsufficientRecentEvidence"},
-		{value: curo.ReasonClientFailureRate, want: "ClientFailureRate"},
-		{value: curo.ReasonRateLimitRate, want: "RateLimitRate"},
-		{value: curo.ReasonDependencyFailureRate, want: "DependencyFailureRate"},
-		{value: curo.ReasonFailureRateIncrease, want: "FailureRateIncrease"},
-		{value: curo.ReasonLatencyIncrease, want: "LatencyIncrease"},
-		{value: curo.ReasonIsolatedDependencyFailure, want: "IsolatedDependencyFailure"},
-		{value: curo.ReasonWithinBaseline, want: "WithinBaseline"},
-		{value: curo.ReasonReadinessRequired, want: "ReadinessRequired"},
-		{value: curo.Reason(99), want: "Reason(99)"},
-		{value: curo.Candidates(0), want: "None"},
-		{value: curo.CandidateRetry, want: "Retry"},
-		{value: curo.CandidateBreakerOpen, want: "BreakerOpen"},
-		{value: curo.CandidateTimeout, want: "Timeout"},
+		{value: curo.MethodRead, number: 0, want: "Read"},
+		{value: curo.MethodWrite, number: 1, want: "Write"},
+		{value: curo.MethodConnect, number: 2, want: "Connect"},
+		{value: curo.MethodOther, number: 3, want: "Other"},
+		{value: curo.MethodClass(9), number: 9, want: "MethodClass(9)"},
+		{value: curo.ReadinessCold, number: 0, want: "Cold"},
+		{value: curo.ReadinessWarming, number: 1, want: "Warming"},
+		{value: curo.ReadinessReady, number: 2, want: "Ready"},
+		{value: curo.ReadinessStale, number: 3, want: "Stale"},
+		{value: curo.Readiness(9), number: 9, want: "Readiness(9)"},
+		{value: curo.DiagnosisNone, number: 0, want: "None"},
+		{value: curo.DiagnosisHealthy, number: 1, want: "Healthy"},
+		{value: curo.DiagnosisTransient, number: 2, want: "Transient"},
+		{value: curo.DiagnosisDependencyDown, number: 3, want: "DependencyDown"},
+		{value: curo.DiagnosisSaturation, number: 4, want: "Saturation"},
+		{value: curo.DiagnosisClientError, number: 5, want: "ClientError"},
+		{value: curo.DiagnosisDegrading, number: 6, want: "Degrading"},
+		{value: curo.Diagnosis(9), number: 9, want: "Diagnosis(9)"},
+		{value: curo.Reason(0), number: 0, want: "Reason(0)"},
+		{value: curo.ReasonNoEvidence, number: 1, want: "NoEvidence"},
+		{value: curo.ReasonEvidenceStale, number: 2, want: "EvidenceStale"},
+		{value: curo.ReasonInsufficientEvidence, number: 3, want: "InsufficientEvidence"},
+		{value: curo.ReasonRecentEvidenceReady, number: 4, want: "RecentEvidenceReady"},
+		{value: curo.ReasonHistoricalBaselineReady, number: 5, want: "HistoricalBaselineReady"},
 		{
-			value: curo.CandidateRetry | curo.CandidateBreakerOpen,
-			want:  "Retry|BreakerOpen",
+			value:  curo.ReasonInsufficientRecentEvidence,
+			number: 6,
+			want:   "InsufficientRecentEvidence",
+		},
+		{value: curo.ReasonClientFailureRate, number: 7, want: "ClientFailureRate"},
+		{value: curo.ReasonRateLimitRate, number: 8, want: "RateLimitRate"},
+		{value: curo.ReasonDependencyFailureRate, number: 9, want: "DependencyFailureRate"},
+		{value: curo.ReasonFailureRateIncrease, number: 10, want: "FailureRateIncrease"},
+		{value: curo.ReasonLatencyIncrease, number: 11, want: "LatencyIncrease"},
+		{
+			value:  curo.ReasonIsolatedDependencyFailure,
+			number: 12,
+			want:   "IsolatedDependencyFailure",
+		},
+		{value: curo.ReasonWithinBaseline, number: 13, want: "WithinBaseline"},
+		{value: curo.ReasonReadinessRequired, number: 14, want: "ReadinessRequired"},
+		{value: curo.Reason(99), number: 99, want: "Reason(99)"},
+		{value: curo.Candidates(0), number: 0, want: "None"},
+		{value: curo.CandidateRetry, number: 1, want: "Retry"},
+		{value: curo.CandidateBreakerOpen, number: 2, want: "BreakerOpen"},
+		{value: curo.CandidateTimeout, number: 4, want: "Timeout"},
+		{
+			value:  curo.CandidateRetry | curo.CandidateBreakerOpen,
+			number: 3,
+			want:   "Retry|BreakerOpen",
 		},
 		{
-			value: curo.CandidateRetry | curo.CandidateBreakerOpen | curo.CandidateTimeout,
-			want:  "Retry|BreakerOpen|Timeout",
+			value:  curo.CandidateRetry | curo.CandidateBreakerOpen | curo.CandidateTimeout,
+			number: 7,
+			want:   "Retry|BreakerOpen|Timeout",
 		},
-		{value: curo.CandidateTimeout | curo.Candidates(8), want: "Timeout|Candidates(8)"},
-		{value: curo.Candidates(136), want: "Candidates(136)"},
+		{
+			value:  curo.CandidateTimeout | curo.Candidates(8),
+			number: 12,
+			want:   "Timeout|Candidates(8)",
+		},
+		{value: curo.Candidates(136), number: 136, want: "Candidates(136)"},
 	}
 
 	for _, test := range tests {
+		// %d formats the number, not the name, of a fmt.Stringer.
+		if got, want := fmt.Sprintf("%d", test.value), fmt.Sprint(test.number); got != want {
+			t.Errorf("%T %s = %s, want %s", test.value, test.want, got, want)
+		}
 		if got := test.value.String(); got != test.want {
 			t.Errorf("%T(%v).String() = %q, want %q", test.value, test.value, got, test.want)
 		}
+		text, err := test.value.MarshalText()
+		if err != nil || string(text) != test.want {
+			t.Errorf("%T(%v).MarshalText() = %q, %v, want %q, nil",
+				test.value, test.value, text, err, test.want)
+		}
+	}
+}
+
+func TestReportEncodesNamesInJSON(t *testing.T) {
+	t.Parallel()
+
+	decision := curo.Decision{
+		Target: curo.Target{
+			Scheme: "https",
+			Host:   "api.example",
+			Port:   443,
+			Method: curo.MethodRead,
+		},
+		Reasons: []curo.Reason{
+			curo.ReasonRecentEvidenceReady,
+			curo.ReasonIsolatedDependencyFailure,
+		},
+		Recent:        curo.Evidence{Attempts: 20, DependencyFailures: 1, Span: time.Minute},
+		Latency:       curo.Latency{Samples: 20, Slowest: 250 * time.Millisecond},
+		Timeout:       2 * time.Second,
+		PolicyVersion: 3,
+		Readiness:     curo.ReadinessReady,
+		Diagnosis:     curo.DiagnosisTransient,
+		Candidates:    curo.CandidateRetry | curo.CandidateTimeout,
+	}
+	report := curo.Report{
+		Targets: []curo.Decision{decision},
+		Changes: []curo.Change{{Sequence: 7}},
+	}
+
+	data, err := json.Marshal(report)
+	if err != nil {
+		t.Fatalf("Marshal() error = %v", err)
+	}
+	zeroEvidence := `{"Attempts":0,"DependencyFailures":0,"RateLimited":0,` +
+		`"ClientFailures":0,"Span":0}`
+	zeroTime := `"0001-01-01T00:00:00Z"`
+	want := `{"Targets":[{` +
+		`"Target":{"Scheme":"https","Host":"api.example","Port":443,"Method":"Read"},` +
+		`"EvaluatedAt":` + zeroTime + `,"ExpiresAt":` + zeroTime + `,` +
+		`"Reasons":["RecentEvidenceReady","IsolatedDependencyFailure"],` +
+		`"Recent":{"Attempts":20,"DependencyFailures":1,"RateLimited":0,` +
+		`"ClientFailures":0,"Span":60000000000},` +
+		`"Historical":` + zeroEvidence + `,` +
+		`"Latency":{"Samples":20,"Slowest":250000000},` +
+		`"Timeout":2000000000,"PolicyVersion":3,"Readiness":"Ready",` +
+		`"Diagnosis":"Transient","Candidates":"Retry|Timeout"}],` +
+		`"Changes":[{"Decision":{` +
+		`"Target":{"Scheme":"","Host":"","Port":0,"Method":"Read"},` +
+		`"EvaluatedAt":` + zeroTime + `,"ExpiresAt":` + zeroTime + `,` +
+		`"Reasons":null,"Recent":` + zeroEvidence + `,"Historical":` + zeroEvidence + `,` +
+		`"Latency":{"Samples":0,"Slowest":0},` +
+		`"Timeout":0,"PolicyVersion":0,"Readiness":"Cold",` +
+		`"Diagnosis":"None","Candidates":"None"},"Sequence":7}]}`
+	if got := string(data); got != want {
+		t.Errorf("Marshal() =\n%s\nwant\n%s", got, want)
+	}
+
+	data, err = json.Marshal(newReportTransport(t).Report())
+	if err != nil {
+		t.Fatalf("Marshal(empty Report) error = %v", err)
+	}
+	if got, want := string(data), `{"Targets":null,"Changes":null}`; got != want {
+		t.Errorf("Marshal(empty Report) = %s, want %s", got, want)
 	}
 }
 

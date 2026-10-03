@@ -17,6 +17,13 @@ import (
 // Reports contain normalized target identities and bounded counters. They
 // never include paths, queries, fragments, user information, headers, bodies,
 // raw errors, or response metadata.
+//
+// A Report encodes to JSON with names for its enumerated values, such as
+// "Ready", and with Reasons as an array of names. The encoding is output only:
+// the enumerated types implement encoding.TextMarshaler but not
+// encoding.TextUnmarshaler. Later versions may add names and fields, so
+// consumers should decode names as strings and tolerate unknown names and
+// fields.
 type Report struct {
 	// Targets holds the latest decision for each tracked regular target,
 	// ordered by scheme, host, port, and method class. It holds at most 128
@@ -193,6 +200,12 @@ func (class MethodClass) String() string {
 	}
 }
 
+// MarshalText encodes the method class as its name. It never returns an
+// error.
+func (class MethodClass) MarshalText() ([]byte, error) {
+	return []byte(class.String()), nil
+}
+
 // Readiness reports whether retained evidence can support a diagnosis.
 type Readiness uint8
 
@@ -225,6 +238,11 @@ func (readiness Readiness) String() string {
 	default:
 		return unknownName("Readiness", uint64(readiness))
 	}
+}
+
+// MarshalText encodes the readiness as its name. It never returns an error.
+func (readiness Readiness) MarshalText() ([]byte, error) {
+	return []byte(readiness.String()), nil
 }
 
 // Diagnosis is a closed diagnosis class.
@@ -276,6 +294,11 @@ func (diagnosis Diagnosis) String() string {
 	default:
 		return unknownName("Diagnosis", uint64(diagnosis))
 	}
+}
+
+// MarshalText encodes the diagnosis as its name. It never returns an error.
+func (diagnosis Diagnosis) MarshalText() ([]byte, error) {
+	return []byte(diagnosis.String()), nil
 }
 
 // Reason is a stable explanation for one part of a Decision.
@@ -369,6 +392,12 @@ func (reason Reason) String() string {
 	}
 }
 
+// MarshalText encodes the reason as its name, so encoding/json renders
+// Decision.Reasons as an array of names. It never returns an error.
+func (reason Reason) MarshalText() ([]byte, error) {
+	return []byte(reason.String()), nil
+}
+
 // Candidates is a set of controls the policy considers eligible.
 type Candidates uint8
 
@@ -422,6 +451,12 @@ func (candidates Candidates) String() string {
 	}
 
 	return strings.Join(names, "|")
+}
+
+// MarshalText encodes the set as String does, such as "Retry|Timeout" or
+// "None". It never returns an error.
+func (candidates Candidates) MarshalText() ([]byte, error) {
+	return []byte(candidates.String()), nil
 }
 
 // Report returns a detached snapshot of published decisions and recent

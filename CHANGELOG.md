@@ -79,6 +79,12 @@ changes will always be listed here under **Changed** or **Removed**.
   `ShadowTimeouts`. In `Observe`, `ShadowTimeouts` counts attempts that the
   adaptive timeout would have ended.
 - `CandidateTimeout`, plus `Decision` fields `Latency` and `Timeout`.
+- Regression gates: a deterministic virtual-time simulation of nine
+  dependency failure scenarios in `Enforce` and `Observe`, checked against
+  invariants and a reviewed golden scorecard; exact allocation gates for the
+  request paths; benchmarks for retry budgets, registry lookups, and
+  concurrent observation; and CI checks for full statement coverage and a
+  single run of every benchmark.
 
 ### Changed
 
@@ -93,5 +99,9 @@ changes will always be listed here under **Changed** or **Removed**.
 - A request whose deprecated `Cancel` channel is closed, as `http.Client` does
   when its `Timeout` expires, is recorded as a caller cancellation instead of
   a dependency failure.
+- Adaptive timeouts no longer skip latency samples. Samples from the part of
+  a minute just before the recent window began were briefly in neither the
+  recent window nor the historical baseline, so a target's timeout could drop
+  for about a minute and then rise again.
 
 [Unreleased]: https://github.com/raj1kshtz/curo/commits/main

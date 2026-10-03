@@ -325,7 +325,7 @@ func newInternalReportTransport(t *testing.T) *Transport {
 	return transport
 }
 
-func newInternalReportRequest(t *testing.T, rawURL string) *http.Request {
+func newInternalReportRequest(t testing.TB, rawURL string) *http.Request {
 	t.Helper()
 
 	request, err := http.NewRequestWithContext(
@@ -341,7 +341,7 @@ func newInternalReportRequest(t *testing.T, rawURL string) *http.Request {
 	return request
 }
 
-func roundTripInternal(t *testing.T, transport *Transport, request *http.Request) {
+func roundTripInternal(t testing.TB, transport *Transport, request *http.Request) {
 	t.Helper()
 
 	response, err := transport.RoundTrip(request)

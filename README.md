@@ -29,7 +29,8 @@ application to tune static thresholds.
 | Public Go API | Transport, lifecycle, operating modes, timeout bounds, aggregate statistics, decision reports, and fail-fast and timeout errors |
 | Runtime implementation | Guarded observation, diagnosis, candidate evaluation, budgeted retries, dependency breakers, and adaptive timeouts around direct delegation |
 | Adaptive behavior | Readiness, diagnosis, and candidates reported; retries, dependency breakers, and adaptive timeouts applied in `Enforce` |
-| Performance data | Allocation benchmarks added; regression gates pending |
+| Performance data | Benchmarks for every measured path, with exact allocation gates in CI |
+| Regression gates | Deterministic failure simulation of nine scenarios with a reviewed scorecard, and full statement coverage in CI |
 
 Public documentation is updated as features become real, rather than
 documenting planned APIs as if they already exist.
@@ -390,9 +391,8 @@ project governance material.
 
 The next milestones are:
 
-1. Harden behavior with regression gates and failure simulations.
-2. Publish operational guidance after behavior is measured.
-3. Review API compatibility and prepare the first release.
+1. Publish operational guidance based on the measured behavior.
+2. Review API compatibility and prepare the first release.
 
 ## Contributing
 

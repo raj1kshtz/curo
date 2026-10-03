@@ -1097,39 +1097,7 @@ func TestTimeoutsAreSafeForConcurrentUse(t *testing.T) {
 }
 
 func BenchmarkTimedRoundTrip(b *testing.B) {
-	baseResponse := &http.Response{StatusCode: http.StatusOK, Body: http.NoBody}
-	base := internalRoundTripperFunc(func(*http.Request) (*http.Response, error) {
-		return baseResponse, nil
-	})
-	clock := newReportClock(time.Unix(60_000, 0))
-	transport := newClockedTransport(b, base, clock.Now)
-	request, err := http.NewRequestWithContext(
-		context.Background(),
-		http.MethodGet,
-		retryTestURL,
-		http.NoBody,
-	)
-	if err != nil {
-		b.Fatalf("NewRequestWithContext() error = %v", err)
-	}
-	for index := range timeout.MinimumSamples + 1 {
-		gap := 500 * time.Millisecond
-		if index == timeout.MinimumSamples {
-			gap = 10 * time.Second
-		}
-		clock.Advance(gap)
-		response, err := transport.RoundTrip(request)
-		if err != nil {
-			b.Fatalf("warm RoundTrip() error = %v", err)
-		}
-		_ = response.Body.Close()
-	}
-	if err := transport.SetMode(Enforce); err != nil {
-		b.Fatalf("SetMode(Enforce) error = %v", err)
-	}
-	if got := transport.Report().Targets[0].Timeout; got != timeout.DefaultBounds.Minimum {
-		b.Fatalf("Timeout = %v, want %v", got, timeout.DefaultBounds.Minimum)
-	}
+	transport, request := timedReadTransport(b)
 
 	b.ReportAllocs()
 	b.ResetTimer()

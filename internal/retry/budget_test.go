@@ -290,3 +290,22 @@ func assertBudgetState(t *testing.T, name string, budget *Budget, wantAvailable,
 		)
 	}
 }
+
+// BenchmarkReserve measures acquiring a retry token from full target and
+// instance budgets and returning it, so every reservation succeeds.
+func BenchmarkReserve(b *testing.B) {
+	var target, instance Budget
+	for range TargetCapacity * DepositsPerToken {
+		Deposit(&target, &instance)
+	}
+
+	b.ReportAllocs()
+	b.ResetTimer()
+	for range b.N {
+		lease, reserved := Reserve(&target, &instance)
+		if !reserved {
+			b.Fatal("Reserve() = false, want a token")
+		}
+		lease.Cancel()
+	}
+}

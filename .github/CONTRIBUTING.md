@@ -48,6 +48,7 @@ Concretely, in all non-test library code:
 go build ./...
 go vet ./...
 go test -race ./...
+go test ./...
 golangci-lint run
 govulncheck ./...
 ```
@@ -55,6 +56,24 @@ govulncheck ./...
 Add focused tests with each implementation change. Time-dependent code must
 accept a controllable time source, and tests must not depend on wall-clock
 sleeps for state transitions.
+
+The allocation gates skip under the race detector and coverage, because both
+change allocation counts, so run the tests once without `-race` as well. CI
+also requires every statement to be covered and runs each benchmark once:
+
+```sh
+go test -coverprofile=coverage.out ./...
+go test -run '^$' -bench . -benchtime 1x ./...
+```
+
+`TestSimulation` compares a scorecard of nine failure scenarios with
+`testdata/simulation.golden`. When a change alters Curo's behavior, the test
+reports the first differing line. Review the difference, regenerate the file,
+and explain the scorecard diff in the pull request:
+
+```sh
+go test -run '^TestSimulation$' -update .
+```
 
 ## Documentation
 

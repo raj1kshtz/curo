@@ -287,11 +287,14 @@ func candidatesChanged(
 
 func (target *target) snapshotLocked(tick int64) diagnose.Snapshot {
 	var (
-		recent  windowAccumulator
-		latency latencySummary
+		recent   windowAccumulator
+		latency  latencySummary
+		boundary [len(latencyUpperBounds) + 1]uint64
 	)
 	currentEpoch := tick / int64(observationBucketWidth)
 	firstEpoch := currentEpoch - observationBucketCount + 1
+	cutoff := firstEpoch * int64(observationBucketWidth)
+	boundaryEpoch := cutoff / int64(baselineBucketWidth)
 	// Closing the dependency breaker fences everything recorded before the
 	// close out of the recent window. The historical cutoff is unchanged, and
 	// the latency summary keeps every retained sample.
@@ -303,6 +306,12 @@ func (target *target) snapshotLocked(tick int64) diagnose.Snapshot {
 		}
 
 		latency.add(&bucket.latency)
+		if bucket.epoch*int64(observationBucketWidth)/
+			int64(baselineBucketWidth) == boundaryEpoch {
+			for slot, count := range bucket.latency {
+				addCounter(&boundary[slot], count)
+			}
+		}
 		if bucket.epoch >= recentFirst {
 			recent.addEvidenceBucket(bucket)
 		}
@@ -310,11 +319,10 @@ func (target *target) snapshotLocked(tick int64) diagnose.Snapshot {
 	recent.finish()
 
 	var historical windowAccumulator
-	cutoff := firstEpoch * int64(observationBucketWidth)
 	if cutoff >= int64(baselineBucketWidth) {
 		currentBaselineEpoch := tick / int64(baselineBucketWidth)
 		firstBaselineEpoch := currentBaselineEpoch - baselineBucketCount + 1
-		lastCompleteEpoch := cutoff/int64(baselineBucketWidth) - 1
+		lastCompleteEpoch := boundaryEpoch - 1
 		for index := range target.baseline {
 			bucket := &target.baseline[index]
 			if bucket.epoch < firstBaselineEpoch ||
@@ -327,6 +335,18 @@ func (target *target) snapshotLocked(tick int64) diagnose.Snapshot {
 		}
 	}
 	historical.finish()
+
+	// The historical window ends before the baseline minute that holds the
+	// recent window's start, so the windows never overlap, and that minute's
+	// samples from before the start belong to neither. The latency summary
+	// takes them from the minute's baseline bucket, less the samples its
+	// evidence buckets in the recent window already added.
+	if cutoff > 0 {
+		bucket := &target.baseline[boundaryEpoch%baselineBucketCount]
+		if bucket.epoch == boundaryEpoch {
+			latency.addExcess(&bucket.latency, &boundary)
+		}
+	}
 
 	return diagnose.Snapshot{
 		Recent:          recent.window,
@@ -359,6 +379,20 @@ func (summary *latencySummary) add(
 		addCounter(&summary.samples, count)
 		summary.slowest = max(summary.slowest, uint8(index)+1)
 	}
+}
+
+// addExcess adds the samples in total beyond those in counted.
+func (summary *latencySummary) addExcess(
+	total *[len(latencyUpperBounds) + 1]uint64,
+	counted *[len(latencyUpperBounds) + 1]uint64,
+) {
+	var excess [len(latencyUpperBounds) + 1]uint64
+	for index, count := range total {
+		if count > counted[index] {
+			excess[index] = count - counted[index]
+		}
+	}
+	summary.add(&excess)
 }
 
 func (summary latencySummary) summary() diagnose.Latency {

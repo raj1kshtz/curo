@@ -15,6 +15,8 @@ import (
 var (
 	_ http.RoundTripper = (*curo.Transport)(nil)
 	_ io.Closer         = (*curo.Transport)(nil)
+
+	_ interface{ CloseIdleConnections() } = (*curo.Transport)(nil)
 )
 
 func TestNewRejectsNilBaseTransport(t *testing.T) {
@@ -283,12 +285,14 @@ func TestZeroValueReturnsExplicitErrors(t *testing.T) {
 			roundTripErr,
 		)
 	}
+	assertRoundTripClosesBody(t, &transport)
 	if err := transport.SetMode(curo.Observe); !errors.Is(err, curo.ErrNilBaseTransport) {
 		t.Errorf("zero-value SetMode() error = %v, want ErrNilBaseTransport", err)
 	}
 	if err := transport.Close(); !errors.Is(err, curo.ErrNilBaseTransport) {
 		t.Errorf("zero-value Close() error = %v, want ErrNilBaseTransport", err)
 	}
+	transport.CloseIdleConnections()
 }
 
 func TestNilTransportReturnsExplicitErrors(t *testing.T) {
@@ -306,12 +310,84 @@ func TestNilTransportReturnsExplicitErrors(t *testing.T) {
 	if !errors.Is(roundTripErr, curo.ErrNilBaseTransport) {
 		t.Errorf("nil RoundTrip() error = %v, want ErrNilBaseTransport", roundTripErr)
 	}
+	assertRoundTripClosesBody(t, transport)
 	if err := transport.SetMode(curo.Observe); !errors.Is(err, curo.ErrNilBaseTransport) {
 		t.Errorf("nil SetMode() error = %v, want ErrNilBaseTransport", err)
 	}
 	if err := transport.Close(); !errors.Is(err, curo.ErrNilBaseTransport) {
 		t.Errorf("nil Close() error = %v, want ErrNilBaseTransport", err)
 	}
+	transport.CloseIdleConnections()
+}
+
+// assertRoundTripClosesBody checks that an uninitialized transport closes the
+// request body before it returns ErrNilBaseTransport, as http.RoundTripper
+// requires, and contains a panic from Close.
+func assertRoundTripClosesBody(t *testing.T, transport *curo.Transport) {
+	t.Helper()
+
+	counting := &closeCountingBody{}
+	for _, body := range []io.ReadCloser{counting, panickingCloseBody{}} {
+		request, err := http.NewRequestWithContext(
+			context.Background(),
+			http.MethodPost,
+			"https://api.example/items",
+			body,
+		)
+		if err != nil {
+			t.Fatalf("NewRequestWithContext() error = %v", err)
+		}
+
+		response, roundTripErr := transport.RoundTrip(request)
+		if response != nil {
+			_ = response.Body.Close()
+		}
+		if !errors.Is(roundTripErr, curo.ErrNilBaseTransport) {
+			t.Errorf("RoundTrip() with a %T body error = %v, want ErrNilBaseTransport",
+				body, roundTripErr)
+		}
+	}
+	if got := counting.closes.Load(); got != 1 {
+		t.Errorf("request body closes = %d, want 1", got)
+	}
+}
+
+func TestCloseIdleConnectionsReachesBase(t *testing.T) {
+	t.Parallel()
+
+	base := &idleClosingRoundTripper{}
+	transport, err := curo.New(base)
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	client := &http.Client{Transport: transport}
+
+	client.CloseIdleConnections()
+	if got := base.idleCloses.Load(); got != 1 {
+		t.Errorf("base CloseIdleConnections calls = %d, want 1", got)
+	}
+
+	if err := transport.Close(); err != nil {
+		t.Fatalf("Close() error = %v", err)
+	}
+	if got := base.idleCloses.Load(); got != 1 {
+		t.Errorf("base CloseIdleConnections calls after Close = %d, want 1", got)
+	}
+	client.CloseIdleConnections()
+	if got := base.idleCloses.Load(); got != 2 {
+		t.Errorf("base CloseIdleConnections calls after a closed call = %d, want 2", got)
+	}
+}
+
+func TestCloseIdleConnectionsIgnoresBaseWithoutIt(t *testing.T) {
+	t.Parallel()
+
+	transport, err := curo.New(roundTripperFunc(nil))
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+
+	transport.CloseIdleConnections()
 }
 
 type roundTripperFunc func(*http.Request) (*http.Response, error)
@@ -334,4 +410,39 @@ func (t *closableRoundTripper) RoundTrip(*http.Request) (*http.Response, error) 
 func (t *closableRoundTripper) Close() error {
 	t.closes.Add(1)
 	return nil
+}
+
+type idleClosingRoundTripper struct {
+	idleCloses atomic.Int32
+}
+
+func (*idleClosingRoundTripper) RoundTrip(*http.Request) (*http.Response, error) {
+	return &http.Response{StatusCode: http.StatusOK, Body: http.NoBody}, nil
+}
+
+func (t *idleClosingRoundTripper) CloseIdleConnections() {
+	t.idleCloses.Add(1)
+}
+
+type closeCountingBody struct {
+	closes atomic.Int32
+}
+
+func (*closeCountingBody) Read([]byte) (int, error) {
+	return 0, io.EOF
+}
+
+func (body *closeCountingBody) Close() error {
+	body.closes.Add(1)
+	return nil
+}
+
+type panickingCloseBody struct{}
+
+func (panickingCloseBody) Read([]byte) (int, error) {
+	return 0, io.EOF
+}
+
+func (panickingCloseBody) Close() error {
+	panic("request body Close")
 }

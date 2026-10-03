@@ -21,7 +21,7 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, windows-latest, macos-latest]
-        go: ["1.23", "1.26"]
+        go: ["1.23", "1.26", "1.27"]
     steps:
       - uses: actions/checkout@v7
 

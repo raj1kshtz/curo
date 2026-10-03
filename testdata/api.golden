@@ -1,0 +1,195 @@
+// Curo's exported API as go/doc sees it, without comments. It only changes
+// when an exported declaration is added, removed, or changed. Review the diff
+// against ADR-0010, then regenerate it with: go test -run '^TestAPI$' -update .
+
+package curo
+
+var (
+	ErrNilBaseTransport       = errors.New("curo: base transport is nil")
+	ErrInvalidMode            = errors.New("curo: invalid mode")
+	ErrClosed                 = errors.New("curo: transport is closed")
+	ErrBreakerOpen            = errors.New("curo: dependency breaker is open")
+	ErrTimeout          error = &timeoutError{}
+)
+
+type Candidates uint8
+
+const (
+	CandidateRetry Candidates = 1 << iota
+	CandidateBreakerOpen
+	CandidateTimeout
+)
+
+func (Candidates) Has(want Candidates) bool
+
+func (Candidates) MarshalText() ([]byte, error)
+
+func (Candidates) String() string
+
+type Change struct {
+	Decision Decision
+	Sequence uint64
+}
+
+type Decision struct {
+	Target        Target
+	EvaluatedAt   time.Time
+	ExpiresAt     time.Time
+	Reasons       []Reason
+	Recent        Evidence
+	Historical    Evidence
+	Latency       Latency
+	Timeout       time.Duration
+	PolicyVersion uint32
+	Readiness     Readiness
+	Diagnosis     Diagnosis
+	Candidates    Candidates
+}
+
+type Diagnosis uint8
+
+const (
+	DiagnosisNone Diagnosis = iota
+	DiagnosisHealthy
+	DiagnosisTransient
+	DiagnosisDependencyDown
+	DiagnosisSaturation
+	DiagnosisClientError
+	DiagnosisDegrading
+)
+
+func (Diagnosis) MarshalText() ([]byte, error)
+
+func (Diagnosis) String() string
+
+type Evidence struct {
+	Attempts           uint64
+	DependencyFailures uint64
+	RateLimited        uint64
+	ClientFailures     uint64
+	Span               time.Duration
+}
+
+type Latency struct {
+	Samples uint64
+	Slowest time.Duration
+}
+
+type MethodClass uint8
+
+const (
+	MethodRead MethodClass = iota
+	MethodWrite
+	MethodConnect
+	MethodOther
+)
+
+func (MethodClass) MarshalText() ([]byte, error)
+
+func (MethodClass) String() string
+
+type Mode uint32
+
+const (
+	Off Mode = iota
+	Observe
+	Enforce
+)
+
+func (Mode) MarshalText() ([]byte, error)
+
+func (Mode) String() string
+
+func (*Mode) UnmarshalText(text []byte) error
+
+type Option interface {
+	// contains filtered or unexported methods
+}
+
+func WithMode(mode Mode) Option
+
+func WithTimeoutBounds(minimum, maximum time.Duration) Option
+
+type Readiness uint8
+
+const (
+	ReadinessCold Readiness = iota
+	ReadinessWarming
+	ReadinessReady
+	ReadinessStale
+)
+
+func (Readiness) MarshalText() ([]byte, error)
+
+func (Readiness) String() string
+
+type Reason uint8
+
+const (
+	ReasonNoEvidence Reason = iota + 1
+	ReasonEvidenceStale
+	ReasonInsufficientEvidence
+	ReasonRecentEvidenceReady
+	ReasonHistoricalBaselineReady
+	ReasonInsufficientRecentEvidence
+	ReasonClientFailureRate
+	ReasonRateLimitRate
+	ReasonDependencyFailureRate
+	ReasonFailureRateIncrease
+	ReasonLatencyIncrease
+	ReasonIsolatedDependencyFailure
+	ReasonWithinBaseline
+	ReasonReadinessRequired
+)
+
+func (Reason) MarshalText() ([]byte, error)
+
+func (Reason) String() string
+
+type Report struct {
+	Targets []Decision
+	Changes []Change
+}
+
+type Stats struct {
+	ObservedRequests   uint64
+	TrackedTargets     uint64
+	OverflowRequests   uint64
+	RetryAttempts      uint64
+	RetrySuccesses     uint64
+	RetryBudgetDenials uint64
+	BreakerOpens       uint64
+	BreakerProbes      uint64
+	BreakerRejections  uint64
+	Timeouts           uint64
+	ShadowTimeouts     uint64
+	InternalFailures   uint64
+	SelfDisabled       bool
+}
+
+type Target struct {
+	Scheme string
+	Host   string
+	Port   uint16
+	Method MethodClass
+}
+
+type Transport struct {
+	// contains filtered or unexported fields
+}
+
+func New(base http.RoundTripper, options ...Option) (*Transport, error)
+
+func (*Transport) Close() error
+
+func (*Transport) CloseIdleConnections()
+
+func (*Transport) Mode() Mode
+
+func (*Transport) Report() Report
+
+func (*Transport) RoundTrip(req *http.Request) (*http.Response, error)
+
+func (*Transport) SetMode(mode Mode) error
+
+func (*Transport) Stats() Stats

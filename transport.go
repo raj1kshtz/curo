@@ -337,8 +337,14 @@ func New(base http.RoundTripper, options ...Option) (*Transport, error) {
 // outside Curo's recovery boundary, so RoundTrip preserves their error and
 // panic behavior, and their response apart from a timed body. RoundTrip
 // remains available after Close.
+//
+// The zero value and a nil *Transport close req.Body, if any, and return
+// ErrNilBaseTransport.
 func (t *Transport) RoundTrip(req *http.Request) (*http.Response, error) {
 	if t == nil || t.base == nil {
+		if req != nil && req.Body != nil {
+			closeUnsentBody(req.Body)
+		}
 		return nil, ErrNilBaseTransport
 	}
 
@@ -688,6 +694,16 @@ func (t *Transport) closeBody(body io.Closer) {
 	})
 }
 
+// closeUnsentBody closes the body of a request that an uninitialized Transport
+// rejects. Such a Transport has no guard, so a new one contains a panic from
+// Close, as closeBody does.
+func closeUnsentBody(body io.Closer) {
+	_ = guard.New().Contain(func() error {
+		_ = body.Close()
+		return nil
+	})
+}
+
 func authorityMode(authority uint64) Mode {
 	return Mode(authority & authorityModeMask)
 }
@@ -799,4 +815,23 @@ func (t *Transport) Close() error {
 
 	t.closed.Store(true)
 	return nil
+}
+
+// CloseIdleConnections calls the base transport's CloseIdleConnections
+// method, if it has one, so that http.Client.CloseIdleConnections reaches the
+// base transport through Curo. Otherwise it does nothing.
+//
+// CloseIdleConnections remains available after Close. The zero value and a
+// nil *Transport do nothing.
+func (t *Transport) CloseIdleConnections() {
+	if t == nil || t.base == nil {
+		return
+	}
+
+	type closeIdler interface {
+		CloseIdleConnections()
+	}
+	if base, ok := t.base.(closeIdler); ok {
+		base.CloseIdleConnections()
+	}
 }

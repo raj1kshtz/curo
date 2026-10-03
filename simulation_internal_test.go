@@ -19,7 +19,7 @@ import (
 	"github.com/raj1kshtz/curo/internal/timeout"
 )
 
-var updateGolden = flag.Bool("update", false, "rewrite testdata/simulation.golden")
+var updateGolden = flag.Bool("update", false, "rewrite the golden files in testdata")
 
 const (
 	simHost   = "api.example"

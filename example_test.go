@@ -86,23 +86,25 @@ func ExampleTransport_SetMode() {
 		_ = transport.Close()
 	}()
 
-	names := map[curo.Mode]string{
-		curo.Off:     "Off",
-		curo.Observe: "Observe",
-		curo.Enforce: "Enforce",
-	}
-	fmt.Println(names[transport.Mode()])
+	fmt.Println(transport.Mode())
 
 	// Connect SetMode to a runtime control, such as an admin endpoint, so
 	// that a rollout or a rollback needs no deploy. Each change applies to
-	// requests that start after it.
-	for _, mode := range []curo.Mode{curo.Enforce, curo.Observe, curo.Off} {
+	// requests that start after it. UnmarshalText accepts a mode name in any
+	// letter case and rejects any other text with ErrInvalidMode.
+	for _, name := range []string{"Enforce", "observe", "on", "OFF"} {
+		var mode curo.Mode
+		err = mode.UnmarshalText([]byte(name))
+		if err != nil {
+			fmt.Println("unknown mode:", name)
+			continue
+		}
 		err = transport.SetMode(mode)
 		if err != nil {
 			fmt.Println("mode change failed")
 			return
 		}
-		fmt.Println(names[transport.Mode()])
+		fmt.Println(transport.Mode())
 	}
 
 	_ = transport.Close()
@@ -111,6 +113,7 @@ func ExampleTransport_SetMode() {
 	// Observe
 	// Enforce
 	// Observe
+	// unknown mode: on
 	// Off
 	// true
 }

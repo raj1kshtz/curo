@@ -65,7 +65,8 @@ timeout ceiling stays below the client's timeout, as
   transport, so a transport created per request never warms up and never
   acts.
 - `Close` does not close the base transport, and requests made after `Close`
-  pass straight through to it.
+  pass straight through to it. `http.Client.CloseIdleConnections` reaches the
+  base transport through Curo.
 - The mode applies to the whole transport. To roll out one dependency at a
   time, give its client a transport of its own.
 - Give clients that call user-supplied URLs, such as webhooks, link previews,
@@ -195,6 +196,11 @@ configuration watcher, so that a rollback needs no deploy:
 - `SetMode(curo.Off)` also stops collecting evidence. Use it when Curo itself
   is suspect.
 
+`Mode.UnmarshalText` accepts `off`, `observe`, or `enforce` in any letter case
+and rejects any other text with `ErrInvalidMode`, so the control can take the
+mode as text. The same method lets `flag.TextVar` or a configuration decoder
+set the startup mode.
+
 A mode change applies to requests that start after it, and it withdraws
 retries that have not started and timeouts that have not fired. Breaker state
 survives it, so restoring `Enforce` while a breaker is open fails requests
@@ -222,15 +228,16 @@ Export it periodically and alert on rates rather than totals.
 | `Timeouts` | Reads that `Enforce` ended with `ErrTimeout`. |
 | `ShadowTimeouts` | Reads that `Observe` let finish but `Enforce` would have ended. |
 
-`Report` gives per-target detail, for a debug endpoint or a periodic log.
-`Report.Targets` holds the latest decision for each tracked target, and
-`Report.Changes` holds the latest 256 candidate changes with contiguous
-sequence numbers. Requests produce the decisions, and each decision expires
-at most ten seconds after it was made. A request after that replaces it, and
-some events, such as the timeout rising or a breaker closing, replace it
-sooner. `Report` only copies the decisions, so polling much more often than
-every ten seconds gains little. Remember the last sequence logged, so that a
-gap shows changes overwritten between reads:
+`Report` gives per-target detail, for a debug endpoint or a periodic log. It
+encodes to JSON with names, such as `"Diagnosis":"Transient"`, so
+`encoding/json` can serve it as it is. `Report.Targets` holds the latest
+decision for each tracked target, and `Report.Changes` holds the latest 256
+candidate changes with contiguous sequence numbers. Requests produce the
+decisions, and each decision expires at most ten seconds after it was made. A
+request after that replaces it, and some events, such as the timeout rising
+or a breaker closing, replace it sooner. `Report` only copies the decisions,
+so polling much more often than every ten seconds gains little. Remember the
+last sequence logged, so that a gap shows changes overwritten between reads:
 
 ```go
 func logChanges(transport *curo.Transport, last uint64) uint64 {

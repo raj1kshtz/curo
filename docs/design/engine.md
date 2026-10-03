@@ -1708,8 +1708,15 @@ The initial contract is:
 - On an open transport, invalid modes return `ErrInvalidMode` without changing
   the active mode.
 - A nil base is rejected. Uninitialized operations that require the base return
-  `ErrNilBaseTransport`, while `Mode` reports `Off`.
+  `ErrNilBaseTransport`, while `Mode` reports `Off`. An uninitialized
+  `RoundTrip` closes the request body first, and an uninitialized
+  `CloseIdleConnections` does nothing.
 - `Close` is idempotent and never closes the base transport.
+- `CloseIdleConnections` calls the base transport's `CloseIdleConnections`
+  method when the base has one, including after close.
+- `Mode` prints and encodes as its name, and decodes from a name in any letter
+  case. Encoding an invalid mode and decoding any other text fail with
+  `ErrInvalidMode`.
 - After close, `RoundTrip` delegates directly and `SetMode` returns
   `ErrClosed`.
 - Optional Curo-owned request stages run only in guarded preflight and
@@ -1732,8 +1739,9 @@ The initial contract is:
 - Decisions expose normalized target identity, readiness, diagnosis, ordered
   reason codes, recent and historical evidence summaries, a latency summary,
   policy version, candidates, the adaptive timeout, and evaluation and expiry
-  times. Report enums are closed, and their `String` methods return stable
-  names. Only `Enforce` applies candidates: `CandidateRetry` through retries,
+  times. Report enums are closed, and their `String` and `MarshalText` methods
+  return stable names, so `encoding/json` encodes a `Report` with names. Only
+  `Enforce` applies candidates: `CandidateRetry` through retries,
   `CandidateBreakerOpen` through dependency breakers, and `CandidateTimeout`
   through adaptive timeouts.
 - Target state is bounded to 128 regular identities and one non-actionable
@@ -1779,6 +1787,10 @@ The initial contract is:
 - `Stats` counts retry attempts, retry successes, retry budget denials,
   breaker openings, breaker probes, breaker rejections, adaptive timeouts in
   `Enforce`, and shadow timeouts in `Observe`.
+
+[ADR-0010](../adr/0010-versioning-and-compatibility.md) defines which parts of
+this contract are compatibility promises and how they may change.
+`testdata/api.golden` records the exported declarations.
 
 The following surfaces remain deferred until their implementations exist:
 

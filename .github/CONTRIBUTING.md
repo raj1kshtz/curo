@@ -78,6 +78,25 @@ go test -run '^TestSimulation$' -update .
 The [operations guide](../docs/guides/operations.md) cites scorecard
 numbers, so update it in the same pull request when they change.
 
+`TestAPI` compares the exported API with `testdata/api.golden`. When a change
+adds, removes, or changes an exported declaration, review the difference
+against the compatibility policy in
+[ADR-0010](../docs/adr/0010-versioning-and-compatibility.md), regenerate the
+file, record the change in the changelog, and say in the pull request whether
+it is compatible:
+
+```sh
+go test -run '^TestAPI$' -update .
+```
+
+The golden file shows declarations, not the values of constants, so
+`TestModeHasStableNames` and `TestReportValuesHaveStableNames` pin the
+number and name of every enumeration value. Add a row for a new value, and
+never change an existing row.
+
+CI runs the tests on Go 1.23, the minimum version in `go.mod`, and on the two
+most recent Go releases.
+
 ## Documentation
 
 - Keep architecture diagram sources and rendered SVGs synchronized. Rendering

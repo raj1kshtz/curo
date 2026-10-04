@@ -29,6 +29,8 @@ together. Code and API documentation define the exact implementation.
    [Bound Slow Reads with Adaptive Timeouts](0009-adaptive-timeouts.md)
 10. **ADR-0010 - Accepted**
     [Version Releases with an Explicit Compatibility Promise](0010-versioning-and-compatibility.md)
+11. **ADR-0011 - Accepted**
+    [Log Internal Failures Through log/slog](0011-internal-failure-logging.md)
 
 ## Lifecycle
 

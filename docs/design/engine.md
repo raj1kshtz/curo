@@ -168,18 +168,19 @@ implementation types.
 
 The current public surface is deliberately limited to `Transport`, `Mode`,
 `Option`, `Stats`, `Report` and its detached decision types, `New`,
-`WithMode`, `WithTimeoutBounds`, mode access, aggregate statistics, the
-pull-based decision report, and lifecycle close. Report values use closed
-enums and copied fields, so internal registries, evaluation state, and policy
-types stay private. Retries add no public type or option: their bounds are
-fixed internal constants, and their aggregate counts appear in `Stats`.
-Dependency breakers add only the `ErrBreakerOpen` sentinel error and aggregate
-`Stats` counters, and their bounds are fixed as well. Adaptive timeouts add
-the `ErrTimeout` sentinel error, the `WithTimeoutBounds` option for their
-floor and ceiling, the `CandidateTimeout` candidate with the `Timeout` and
-`Latency` decision fields, and aggregate `Stats` counters. Replay opt-in for
-unsafe methods, other mitigation configuration, and applied-action auditing
-remain deferred.
+`WithMode`, `WithTimeoutBounds`, `WithLogger`, mode access, aggregate
+statistics, the pull-based decision report, and lifecycle close. Report
+values use closed enums and copied fields, so internal registries, evaluation
+state, and policy types stay private. Retries add no public type or option:
+their bounds are fixed internal constants, and their aggregate counts appear
+in `Stats`. Dependency breakers add only the `ErrBreakerOpen` sentinel error
+and aggregate `Stats` counters, and their bounds are fixed as well. Adaptive
+timeouts add the `ErrTimeout` sentinel error, the `WithTimeoutBounds` option
+for their floor and ceiling, the `CandidateTimeout` candidate with the
+`Timeout` and `Latency` decision fields, and aggregate `Stats` counters.
+Internal-failure logging adds only the `WithLogger` option, which takes a
+standard `*slog.Logger`. Replay opt-in for unsafe methods, other mitigation
+configuration, and applied-action auditing remain deferred.
 
 ### 7.2 Transport Adapter
 
@@ -243,6 +244,10 @@ rejected by a dependency breaker is closed through the same boundary.
 Starting an adaptive timeout and its timer callback run inside the guard, so
 self-disable skips them. Settling a timed attempt uses the containment
 boundary, because its timer and derived context must still be released.
+
+Each guarded operation names its stage: preflight, postflight, retry,
+timeout, body, or report. The guard passes the stage with each failure to the
+logger that `WithLogger` sets, as section 16.4 describes.
 
 ### 7.4 Mode Gate
 
@@ -633,9 +638,10 @@ increase the aggregate failure count.
 
 The threshold is an internal safety setting rather than a public option.
 The active observation stage runs only in `Observe` and `Enforce`. Its
-contained failures are visible through aggregate `Stats`. Report construction
-is not a request stage: it still runs after self-disable, and its contained
-failures count toward the same window and aggregate count.
+contained failures are visible through aggregate `Stats` and, with
+`WithLogger`, in logs. Report construction is not a request stage: it still
+runs after self-disable, and its contained failures count toward the same
+window and aggregate count.
 
 ## 10. State and Concurrency Ownership
 
@@ -1334,13 +1340,30 @@ host-provided sink:
 - Is not called from the maintenance worker.
 - Is not given mutable internal state.
 
-The implemented delivery contract is pull-based. `Transport.Report` copies
-bounded state on the caller's goroutine and invokes no host callback. Callback
-sinks and structured logging remain deferred and must follow the rules above.
-The core must not create a goroutine per event.
+Decisions are delivered by pull. `Transport.Report` copies bounded state on
+the caller's goroutine and invokes no host callback. Callback sinks for
+decisions remain deferred and must follow the rules above. The core must not
+create a goroutine per event.
 
-Future internal failure logging must be best effort and rate-limited. A logging
-failure cannot replace the request result.
+Internal failures go to the `*slog.Logger` that `WithLogger` sets, as
+[ADR-0011](../adr/0011-internal-failure-logging.md) decides. The guard
+numbers a failure under its lock and reports it after it releases the lock,
+on the goroutine where the failure happened, inside a recovery boundary of
+its own. A failing handler is ignored: it is not counted, and it cannot
+replace the request result. Reporting is best effort. One goroutine reports
+at a time, so a failure during a report, including one that the handler
+causes, is skipped, and the handler is never reentered. A self-disable event
+waits for the report in progress, and a turn to report ends even if the
+handler ends its goroutine. Reports are rate-limited to three failures per
+rolling minute, the self-disable threshold, so the limit skips only failures
+after self-disable. The next report counts what was skipped. A record holds
+the stage, the kind, the Go type without the parts that `reflect` can build
+at run time, the message of a runtime error whose message is fixed text, the
+counts, and a stack trace of function names and source lines capped at
+8 KiB. It never holds a panic value, another error's message, an argument
+value, a struct type's fields, or an array type's length, which can carry
+application data. A type name is cut after 16 levels of nested types or at
+512 bytes.
 
 Error `Unwrap`, `Is`, and `Timeout` methods are also host-provided callbacks.
 They run outside internal locks and inside postflight containment. As with any
@@ -1370,8 +1393,8 @@ requests, retry successes never exceed retry attempts, retry attempts plus
 budget denials never exceed observed requests, shadow timeouts never exceed
 observed requests, and self-disabled state implies at least three contained
 failures.
-Per-target decisions are available through `Transport.Report`; callbacks and
-logging sinks remain deferred.
+Per-target decisions are available through `Transport.Report`, and
+`WithLogger` logs contained failures. Callback sinks remain deferred.
 
 ### 16.6 Decision Report
 
@@ -1702,6 +1725,9 @@ The initial contract is:
 - `WithTimeoutBounds` sets the floor and ceiling of adaptive timeouts, 2 and
   30 seconds by default. Zero for both disables adaptive timeouts. Otherwise
   the floor must be positive and must not exceed the ceiling.
+- `WithLogger` sets the `*slog.Logger` that receives contained internal
+  failures and self-disable. A nil logger is rejected, and without the option
+  Curo logs nothing.
 - `Mode` and `SetMode` are safe for concurrent use.
 - `Stats` returns privacy-safe aggregate counters and self-disable state. It is
   safe for concurrent use and remains readable after close.
@@ -1799,7 +1825,7 @@ The following surfaces remain deferred until their implementations exist:
 - Replay opt-in for unsafe methods.
 - Callback or logging delivery of decisions and candidate changes.
 - Mode, applied-action, budget, and breaker-state fields in decision records.
-- Detailed internal-failure events and logging sinks.
+- Request context, such as trace identifiers, in internal-failure records.
 - Internal-failure error types.
 - Self-disable reset.
 - Capacity, expiry, window, budget, breaker, and other timeout options.

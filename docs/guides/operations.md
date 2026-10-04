@@ -7,9 +7,8 @@ fails. The [behavior reference](../reference/behavior.md) describes each
 mechanism in detail, and the [engine design](../design/engine.md) explains
 the reasons behind it.
 
-Only the operating mode and the timeout bounds are configurable, and every
-other threshold is fixed. This guide therefore explains what the thresholds
-mean in operation rather than how to tune them.
+Apart from the timeout bounds, every threshold is fixed. This guide therefore
+explains what the thresholds mean in operation rather than how to tune them.
 
 Measured numbers come from the deterministic failure simulation, whose
 scorecard is [`testdata/simulation.golden`](../../testdata/simulation.golden).
@@ -37,10 +36,11 @@ Create one `curo.Transport` per base transport when the process starts, and
 close it during shutdown:
 
 ```go
-func run() error {
+func run(logger *slog.Logger) error {
     transport, err := curo.New(
         http.DefaultTransport,
         curo.WithTimeoutBounds(2*time.Second, 9*time.Second),
+        curo.WithLogger(logger),
     )
     if err != nil {
         return err
@@ -58,7 +58,9 @@ func run() error {
 
 `curo.New` starts in `Observe` mode, which never changes a request. The
 timeout ceiling stays below the client's timeout, as
-[Choose timeout bounds](#choose-timeout-bounds) explains.
+[Choose timeout bounds](#choose-timeout-bounds) explains. `WithLogger` gives
+Curo the service's logger, which receives only Curo's own failures, as
+[Monitor](#monitor) describes.
 
 - Share the transport across goroutines and clients for the life of the
   process. Evidence, retry budgets, breakers, and timeouts belong to one
@@ -215,7 +217,7 @@ Export it periodically and alert on rates rather than totals.
 
 | Field | Meaning and action |
 | --- | --- |
-| `InternalFailures` | Curo contained a failure of its own, and requests were unaffected. Report any increase as a bug. |
+| `InternalFailures` | Curo contained a failure of its own, and requests were unaffected. Report any increase as a bug, with the records that `WithLogger` wrote. |
 | `SelfDisabled` | Three internal failures within one minute made the transport pass every request straight through for the rest of its life. Requests still work but are unprotected. Report the bug and restart. |
 | `OverflowRequests` | Requests that went to the overflow aggregate, which gets no actions: requests to targets beyond the tracked 128, or with an invalid scheme, host, or port. If it grows, move high-cardinality traffic to its own transport. |
 | `TrackedTargets` | Tracked targets. Close to 128 means overflow is near. |
@@ -227,6 +229,16 @@ Export it periodically and alert on rates rather than totals.
 | `BreakerRejections` | Requests failed fast with `ErrBreakerOpen` without being sent. |
 | `Timeouts` | Reads that `Enforce` ended with `ErrTimeout`. |
 | `ShadowTimeouts` | Reads that `Observe` let finish but `Enforce` would have ended. |
+
+With `WithLogger`, internal failures are also offered to the logger at `Warn`
+level with the stage that failed and, for a panic, a stack trace without
+argument values. Self-disable is offered once, at `Error` level. Curo logs
+nothing else. The logger's level and handler decide which records are
+written, so alert on `SelfDisabled`, which does not depend on the logger, and
+count failures with `InternalFailures`, not with records: a transport offers
+its logger one record at a time and at most three failure records a minute.
+The [behavior reference](../reference/behavior.md#failure-containment) lists
+every attribute and limit.
 
 `Report` gives per-target detail, for a debug endpoint or a periodic log. It
 encodes to JSON with names, such as `"Diagnosis":"Transient"`, so
@@ -367,8 +379,7 @@ Low-volume dependencies get fewer actions:
 
 ## Known limitations
 
-- Thresholds are fixed. Only the mode and the timeout bounds are
-  configurable.
+- Thresholds are fixed, apart from the timeout bounds.
 - State belongs to one process, so replicas decide independently and a
   restart starts cold.
 - A target covers every path on a host with the same method class, so a
@@ -376,10 +387,8 @@ Low-volume dependencies get fewer actions:
 - Curo never times breaker probes, and a probe is a real application
   request, which may be a write.
 - The mode applies to a whole transport.
-- Curo does not log its own failures yet, although
-  [ADR-0002](../adr/0002-host-application-inviolability.md) calls for a
-  structured logger. `InternalFailures` and `SelfDisabled` in `Stats` are
-  the only signals.
+- Logged failures carry no request context, so they cannot be joined to a
+  request's trace.
 
 The behavior reference lists the detailed limits of
 [dependency breakers](../reference/behavior.md#dependency-breakers) and

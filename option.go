@@ -1,7 +1,9 @@
 package curo
 
 import (
+	"errors"
 	"fmt"
+	"log/slog"
 	"time"
 
 	"github.com/raj1kshtz/curo/internal/timeout"
@@ -15,6 +17,7 @@ type Option interface {
 }
 
 type config struct {
+	logger   *slog.Logger
 	timeouts timeout.Bounds
 	mode     Mode
 }
@@ -65,6 +68,64 @@ func WithTimeoutBounds(minimum, maximum time.Duration) Option {
 		}
 
 		cfg.timeouts = bounds
+		return nil
+	})
+}
+
+// WithLogger logs Curo's internal failures to logger. By default, Curo logs
+// nothing.
+//
+// Curo contains a panic or an error in its own work, including application
+// code that the work calls, such as a body's Close method or an error's Unwrap
+// method. It offers each failure to logger as a Warn record with these
+// attributes:
+//
+//   - stage: the work that failed: preflight, postflight, retry, timeout,
+//     body, or report
+//   - kind: panic, or error when the work returned an error
+//   - type: the Go type of the panic value or error. Types that package
+//     reflect builds at run time can hold application data, so an unnamed
+//     struct, function, or channel type is written as struct, func, or chan,
+//     and an array type as [...]T, without its length. A name is cut after
+//     16 levels of nested types or at 512 bytes, and then ends with "...".
+//   - error: the message of a Go runtime error whose message is fixed text,
+//     such as a nil pointer dereference. Other messages can hold application
+//     data, as an index out of range error holds the index and a failed type
+//     assertion names types, so they are omitted.
+//   - failures: the failure's number, from the count that [Stats] reports as
+//     InternalFailures
+//   - skipped: the number of failures since the previous failure record that
+//     were not offered to logger, present only when some were
+//   - stack: for a panic, the functions and source lines of the goroutine
+//     that panicked, from the panic outward, without argument values, and
+//     truncated to whole frames within 8 KiB
+//
+// When three internal failures within a minute disable the Transport, it
+// offers that once as an Error record with a failures attribute.
+//
+// A Transport offers one record at a time, and at most three failure records
+// a minute. A failure that happens while a record is offered is skipped,
+// including one that the handler causes by calling the Transport, so the
+// handler is never called reentrantly. The per-minute limit skips no failure
+// before self-disable, only failures in the work that continues afterwards:
+// settling the timeouts of requests in progress, closing bodies, and building
+// reports.
+//
+// Records are offered synchronously, outside Curo's locks, with
+// [context.Background]. A failure record is offered on the goroutine where the
+// failure happened, and the self-disable record follows a failure record on
+// the same goroutine. The logger's level and handler decide which records are
+// written. A panic from the handler is recovered and ignored, and does not
+// count as an internal failure.
+//
+// A nil logger is rejected.
+func WithLogger(logger *slog.Logger) Option {
+	return optionFunc(func(cfg *config) error {
+		if logger == nil {
+			return errors.New("nil logger")
+		}
+
+		cfg.logger = logger
 		return nil
 	})
 }

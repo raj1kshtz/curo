@@ -480,7 +480,7 @@ func (t *Transport) Report() Report {
 	}
 
 	var report Report
-	if t.guard.Contain(func() error {
+	if t.guard.Contain(guard.StageReport, func() error {
 		report = newReport(t.reports())
 		return nil
 	}) != guard.Completed {

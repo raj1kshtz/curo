@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/raj1kshtz/curo/internal/breaker"
+	"github.com/raj1kshtz/curo/internal/guard"
 )
 
 // openBreaker records 21 dependency failures in Observe, selects Enforce, and
@@ -385,7 +386,7 @@ func TestSelfDisabledTransportBypassesOpenBreaker(t *testing.T) {
 	harness := newRetryHarness(t)
 	harness.openBreaker()
 	for range 3 {
-		harness.transport.guard.Run(func() error {
+		harness.transport.guard.Run(guard.StagePreflight, func() error {
 			return errRetryTestTransport
 		})
 	}

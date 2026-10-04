@@ -285,7 +285,7 @@ func New(base http.RoundTripper, options ...Option) (*Transport, error) {
 	observer := observe.New(cfg.timeouts)
 	transport := &Transport{
 		base:     base,
-		guard:    guard.New(),
+		guard:    guard.New(failureReporter(cfg.logger)),
 		observer: observer,
 		reports:  observer.Report,
 		wait:     retry.Wait,
@@ -357,7 +357,7 @@ func (t *Transport) RoundTrip(req *http.Request) (*http.Response, error) {
 	if stages != nil && !t.closed.Load() {
 		authority = t.authority.Load()
 		if authorityMode(authority) != Off && !t.guard.Disabled() {
-			runPostflight = t.guard.Run(func() error {
+			runPostflight = t.guard.Run(guard.StagePreflight, func() error {
 				var err error
 				state, err = stages.preflight(snapshotRequest(req), authority)
 				return err
@@ -384,7 +384,7 @@ func (t *Transport) RoundTrip(req *http.Request) (*http.Response, error) {
 	}
 
 	var grant retryGrant
-	outcome := t.guard.Run(func() error {
+	outcome := t.guard.Run(guard.StagePostflight, func() error {
 		result := captureAttempt(response, err)
 		if cut {
 			result.timeout = limit
@@ -470,7 +470,7 @@ func (t *Transport) prepareRetry(
 		next *http.Request
 		body io.ReadCloser
 	)
-	_ = t.guard.Run(func() error {
+	_ = t.guard.Run(guard.StageRetry, func() error {
 		ctx := req.Context()
 		if !t.authorized(authority) || !t.wait(ctx, cancel, delay) {
 			return nil
@@ -519,7 +519,7 @@ func (t *Transport) commitRetry(
 		permitted bool
 		limit     time.Duration
 	)
-	_ = t.guard.Run(func() error {
+	_ = t.guard.Run(guard.StageRetry, func() error {
 		permitted = t.authorized(authority) &&
 			!retry.Canceled(state.cancel) &&
 			retry.DeadlineAllows(req.Context(), 0, firstAttempt) &&
@@ -569,7 +569,7 @@ func (t *Transport) send(
 		// A panicking base transport returns no result to settle. Its panic
 		// keeps propagating: Contain recovers only a failure of Abandon.
 		if !returned {
-			_ = t.guard.Contain(func() error {
+			_ = t.guard.Contain(guard.StageTimeout, func() error {
 				attempt.Abandon()
 				return nil
 			})
@@ -600,7 +600,7 @@ func (t *Transport) arm(
 		attempt *timeout.Attempt
 		timed   *http.Request
 	)
-	if t.guard.Run(func() error {
+	if t.guard.Run(guard.StageTimeout, func() error {
 		armed := timeout.New(req.Context(), cancel, limit)
 		attempt = armed
 		timed = req.WithContext(armed.Context())
@@ -613,7 +613,7 @@ func (t *Transport) arm(
 	}
 
 	if attempt != nil {
-		_ = t.guard.Contain(func() error {
+		_ = t.guard.Contain(guard.StageTimeout, func() error {
 			attempt.Abandon()
 			return nil
 		})
@@ -625,7 +625,7 @@ func (t *Transport) arm(
 // elapses. Like a retry that has not started, the timeout is withdrawn when
 // the request's authority was revoked or Curo disabled itself.
 func (t *Transport) expire(attempt *timeout.Attempt, authority uint64) {
-	_ = t.guard.Run(func() error {
+	_ = t.guard.Run(guard.StageTimeout, func() error {
 		if t.authorized(authority) {
 			attempt.Expire()
 		}
@@ -646,7 +646,7 @@ func (t *Transport) settle(
 	// Settle decides the attempt before it stops the timer, the only step
 	// that can fail, so an attempt whose Settle failed still returned.
 	returned := true
-	_ = t.guard.Contain(func() error {
+	_ = t.guard.Contain(guard.StageTimeout, func() error {
 		returned = attempt.Settle()
 		return nil
 	})
@@ -657,7 +657,7 @@ func (t *Transport) settle(
 		return true
 	}
 
-	_ = t.guard.Contain(func() error {
+	_ = t.guard.Contain(guard.StageTimeout, func() error {
 		if err != nil ||
 			response == nil ||
 			response.Body == nil ||
@@ -688,7 +688,7 @@ func (t *Transport) reject(req *http.Request) error {
 // that Curo discarded. The close error is ignored because the body is no
 // longer part of any result.
 func (t *Transport) closeBody(body io.Closer) {
-	_ = t.guard.Contain(func() error {
+	_ = t.guard.Contain(guard.StageBody, func() error {
 		_ = body.Close()
 		return nil
 	})
@@ -698,7 +698,7 @@ func (t *Transport) closeBody(body io.Closer) {
 // rejects. Such a Transport has no guard, so a new one contains a panic from
 // Close, as closeBody does.
 func closeUnsentBody(body io.Closer) {
-	_ = guard.New().Contain(func() error {
+	_ = guard.New(nil).Contain(guard.StageBody, func() error {
 		_ = body.Close()
 		return nil
 	})

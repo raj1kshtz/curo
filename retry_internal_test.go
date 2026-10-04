@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/raj1kshtz/curo/internal/guard"
 	"github.com/raj1kshtz/curo/internal/retry"
 )
 
@@ -832,7 +833,7 @@ func TestRetryAuthorityRevocationWithdrawsPendingRetry(t *testing.T) {
 			name: "self-disable",
 			revoke: func(_ *testing.T, harness *retryHarness) {
 				for range 3 {
-					harness.transport.guard.Run(func() error {
+					harness.transport.guard.Run(guard.StagePreflight, func() error {
 						return errRetryTestTransport
 					})
 				}

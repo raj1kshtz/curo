@@ -5,6 +5,7 @@ import (
 	"errors"
 	"expvar"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -74,6 +75,31 @@ func ExampleWithTimeoutBounds() {
 	// 10s
 	// 0
 	// true
+}
+
+func ExampleWithLogger() {
+	// Curo writes records only when it contains a failure in its own work, so
+	// a healthy Transport logs nothing.
+	transport, err := curo.New(
+		http.DefaultTransport,
+		curo.WithMode(curo.Enforce),
+		curo.WithLogger(slog.Default()),
+	)
+	if err != nil {
+		fmt.Println("setup failed")
+		return
+	}
+	defer func() {
+		_ = transport.Close()
+	}()
+
+	fmt.Println(transport.Stats().InternalFailures)
+
+	_, err = curo.New(http.DefaultTransport, curo.WithLogger(nil))
+	fmt.Println(err)
+	// Output:
+	// 0
+	// curo: apply option 1: nil logger
 }
 
 func ExampleTransport_SetMode() {

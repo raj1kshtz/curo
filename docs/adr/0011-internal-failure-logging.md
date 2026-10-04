@@ -1,7 +1,7 @@
 # ADR-0011: Log Internal Failures Through log/slog
 
 - **Status:** Accepted
-- **Date:** 2026-10-03
+- **Date:** 2026-10-04
 - **Scope:** Internal-failure reporting and the `WithLogger` option
 - **Decision owners:** Curo maintainers
 

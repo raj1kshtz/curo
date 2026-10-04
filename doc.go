@@ -26,8 +26,8 @@
 // A new Transport starts in [Observe]: it sends every request unchanged and
 // reports what it would do. [Enforce] applies the controls, and [Off] passes
 // requests straight to the base transport. [Transport.SetMode] changes the
-// mode at runtime, so a rollback needs no deploy. Only the mode and the
-// timeout bounds, set with [WithTimeoutBounds], are configurable.
+// mode at runtime, so a rollback needs no deploy. Apart from the timeout
+// bounds, set with [WithTimeoutBounds], every threshold is fixed.
 //
 // # Errors
 //
@@ -45,9 +45,10 @@
 //
 // Curo runs inside the application it protects. A failure inside Curo never
 // fails a request, and repeated failures make the Transport pass requests
-// straight through. Curo never retries a request that is not replay-safe,
-// never extends a caller's deadline, and keeps its state bounded however
-// many hosts the application calls.
+// straight through. [Transport.Stats] counts these failures, and [WithLogger]
+// logs where each one happened. Curo never retries a request that is not
+// replay-safe, never extends a caller's deadline, and keeps its state bounded
+// however many hosts the application calls.
 //
 // The [operations guide] explains how to run Curo in a service, and the
 // [behavior reference] describes each mechanism in detail.

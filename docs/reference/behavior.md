@@ -332,10 +332,51 @@ The transport separates optional Curo-owned preflight and postflight work
 from the unguarded base transport call, so the base transport keeps its own
 panic semantics. A preflight failure falls back to the original request,
 while a postflight or retry-preparation failure preserves the captured
-transport result. Repeated internal failures permanently select direct
-pass-through for that instance. Aggregate failure counts and self-disable
-state remain readable through `Stats`, which is the only report of internal
-failures. Failure logging, which
-[ADR-0002](../adr/0002-host-application-inviolability.md) calls for, remains
-deferred with detailed failure events and a self-disable reset, as the
-[engine design](../design/engine.md) records.
+transport result. Three internal failures within one minute permanently
+select direct pass-through for that instance, and a reset remains deferred,
+as the [engine design](../design/engine.md) records. `Stats` counts the
+failures in `InternalFailures` and reports self-disable in `SelfDisabled`.
+
+Curo's work includes application code that it calls, so a failure can come
+from the application. Each failure belongs to one stage:
+
+| Stage | Work |
+| --- | --- |
+| `preflight` | Identifying the target, breaker admission, and the timeout lookup before the first attempt |
+| `postflight` | Classifying the result, including calls to the error's `Unwrap`, `Is`, and `Timeout` methods, and updating evidence, breakers, and retry budgets |
+| `retry` | The backoff, the request's `GetBody`, and the final checks before a retry |
+| `timeout` | Starting, expiring, and settling adaptive timeouts |
+| `body` | Closing a body that Curo did not send or discarded, with its `Close` method |
+| `report` | Building a `Report` |
+
+`WithLogger` offers each failure to its logger as a `Warn` record,
+`curo contained an internal failure`, with these attributes. The logger's
+level and handler decide whether the record is written.
+
+| Attribute | Value |
+| --- | --- |
+| `stage` | The stage that failed |
+| `kind` | `panic`, or `error` when the work returned an error |
+| `type` | The Go type of the panic value or error. Types that package `reflect` builds at run time can hold application data, so an unnamed struct, function, or channel type is written as `struct`, `func`, or `chan`, and an array type as `[...]T`, without its length. A name is cut after 16 levels of nested types or at 512 bytes, and then ends with `...`. |
+| `error` | The message of a Go runtime error whose message is fixed text, such as a nil pointer dereference. Absent for other values and errors, which can hold application data, and for runtime errors whose messages hold values or type names, such as an index out of range or a failed type assertion. |
+| `failures` | The failure's number, from the count in `InternalFailures` |
+| `skipped` | The number of failures since the previous failure record that were not offered to the logger. Present only when some were. |
+| `stack` | For a panic, the functions and source lines of the goroutine that panicked, from the panic outward, without argument values. Truncated to whole frames within 8 KiB, ending with `...additional frames elided...`. |
+
+Self-disable is offered once, as an `Error` record,
+`curo disabled itself after repeated internal failures`, whose `failures`
+attribute is the number of the failure that disabled the transport.
+
+A transport offers one record at a time, and at most three failure records
+per rolling minute. A failure that happens while a record is offered is
+skipped, including one that the handler causes by calling the transport, so
+the handler is never called reentrantly. Three failures within a minute
+disable the transport, so the per-minute limit skips only failures after
+self-disable, in the work that continues: settling the timeouts of requests
+in progress, closing bodies, and building reports.
+
+Records are offered synchronously, outside Curo's locks, with
+`context.Background()`. A failure record is offered on the goroutine where
+the failure happened, and the self-disable record follows a failure record
+on the same goroutine. A panic from the handler is recovered and is not
+counted as an internal failure. Without `WithLogger`, Curo logs nothing.

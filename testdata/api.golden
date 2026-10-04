@@ -106,6 +106,8 @@ type Option interface {
 	// contains filtered or unexported methods
 }
 
+func WithLogger(logger *slog.Logger) Option
+
 func WithMode(mode Mode) Option
 
 func WithTimeoutBounds(minimum, maximum time.Duration) Option

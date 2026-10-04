@@ -63,11 +63,13 @@ type Stats struct {
 	ShadowTimeouts uint64
 
 	// InternalFailures is the number of contained Curo-owned failures in
-	// request stages and Report.
+	// request stages and Report. [WithLogger] offers them to its logger,
+	// within the limits that it describes.
 	InternalFailures uint64
 
 	// SelfDisabled reports whether repeated internal failures permanently
-	// selected direct pass-through for this Transport.
+	// selected direct pass-through for this Transport. [WithLogger] offers the
+	// change to its logger once.
 	SelfDisabled bool
 }
 

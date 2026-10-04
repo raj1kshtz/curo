@@ -46,10 +46,14 @@ The first release.
   reasons, and the latest 256 changes. Reports encode to JSON with names.
 - Failure containment: a failure inside Curo never fails a request, and
   repeated failures make the transport pass requests straight through.
+- `WithLogger`, which logs contained internal failures through `log/slog`,
+  with the stage that failed and, for a panic, a stack trace without argument
+  values. A transport offers its logger one failure at a time and at most
+  three a minute, and self-disable once.
 - Documentation: an operations guide, a behavior reference, the engine
-  design, and Architecture Decision Records 0001 through 0010.
-- Runnable examples for wiring, timeout bounds, runtime mode changes,
-  `expvar` export, error handling, and reports.
+  design, and Architecture Decision Records 0001 through 0011.
+- Runnable examples for wiring, timeout bounds, logging, runtime mode
+  changes, `expvar` export, error handling, and reports.
 - Quality gates in CI: a deterministic simulation scorecard, allocation
   gates, an API gate, full statement coverage, benchmarks, and tests on Go
   1.23, 1.26, and 1.27.

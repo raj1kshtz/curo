@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/raj1kshtz/curo/internal/breaker"
+	"github.com/raj1kshtz/curo/internal/guard"
 	"github.com/raj1kshtz/curo/internal/timeout"
 )
 
@@ -457,7 +458,7 @@ func TestTimeoutWithdrawnWhenAuthorityEnds(t *testing.T) {
 		},
 		"self-disable": func(t *testing.T, transport *Transport) {
 			for range 3 {
-				transport.guard.Run(func() error {
+				transport.guard.Run(guard.StagePreflight, func() error {
 					return errors.New("internal failure")
 				})
 			}

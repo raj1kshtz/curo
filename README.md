@@ -154,17 +154,17 @@ application inviolability:
   semantics.
 
 [ADR-0002](docs/adr/0002-host-application-inviolability.md) records the full
-contract. Its failure logging is not implemented yet, so `Stats` is the only
-report of Curo's internal failures.
+contract. `Stats` counts Curo's internal failures, and `curo.WithLogger` logs
+them through `log/slog`, with the stage that failed and, for a panic, a stack
+trace to include in a bug report.
 
 ## Scope
 
 Curo is an embedded library for outbound `net/http` traffic, and its state
-belongs to one process. Only the mode and the timeout bounds are
-configurable; every other threshold is fixed and tuned from evidence. Curo
-does not provide sidecars, a control plane, SDKs for other languages, ingress
-middleware, gRPC interception, or machine-learning policy. The operations
-guide lists the
+belongs to one process. Apart from the timeout bounds, every threshold is
+fixed and tuned from evidence. Curo does not provide sidecars, a control
+plane, SDKs for other languages, ingress middleware, gRPC interception, or
+machine-learning policy. The operations guide lists the
 [known limitations](docs/guides/operations.md#known-limitations).
 
 ## Documentation

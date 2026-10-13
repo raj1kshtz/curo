@@ -76,6 +76,8 @@ The first engine does not provide:
 - SDKs for languages other than Go.
 - Fleet-wide state or cross-process retry coordination.
 - Ingress middleware or gRPC interception.
+- Outbound traffic that does not go through `net/http`, such as database
+  drivers, cache and message broker clients, or raw TCP.
 - Request or response body inspection.
 - Response caching or business-level fallback values.
 - Machine-learning policy.

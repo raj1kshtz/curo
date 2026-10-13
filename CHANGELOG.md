@@ -13,6 +13,14 @@ the compatibility policy.
 
 ## [Unreleased]
 
+### Added
+
+- The operations guide explains how Curo works over HTTPS, HTTP/2, and
+  unencrypted HTTP/2, and how to turn on HTTP/2 health checks in the base
+  transport. Tests run Curo's retries, breakers, and timeouts over each
+  protocol, and the scope now names the outbound traffic that Curo does not
+  cover because it does not go through `net/http`.
+
 ## [0.1.0] - 2026-10-04
 
 The first release.

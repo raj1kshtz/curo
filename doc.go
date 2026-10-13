@@ -41,6 +41,14 @@
 // returns each dependency's latest decision with its evidence and reasons.
 // Both encode to JSON.
 //
+// # Protocols
+//
+// Curo wraps the base transport above the wire protocol, and the base
+// transport keeps its own connections, TLS settings, and protocol
+// negotiation. HTTP/1.1, HTTPS, and HTTP/2 therefore need no Curo
+// configuration. The [operations guide] shows how to turn on HTTP/2 health
+// checks in the base transport.
+//
 // # Safety
 //
 // Curo runs inside the application it protects. A failure inside Curo never

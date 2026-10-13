@@ -5,7 +5,6 @@ import (
 	"errors"
 	"io"
 	"net/http"
-	"net/http/httptest"
 	"slices"
 	"strings"
 	"sync"
@@ -417,12 +416,16 @@ func TestEnforceReplaysBodyFromGetBody(t *testing.T) {
 func TestEnforceRetriesThroughHTTPServer(t *testing.T) {
 	t.Parallel()
 
+	forEachProtocol(t, testEnforceRetriesThroughServer)
+}
+
+func testEnforceRetriesThroughServer(t *testing.T, protocol testProtocol) {
 	var (
 		mu       sync.Mutex
 		statuses []int
 		bodies   []string
 	)
-	server := httptest.NewServer(http.HandlerFunc(
+	server, base := protocol.serve(t, http.HandlerFunc(
 		func(response http.ResponseWriter, request *http.Request) {
 			content, readErr := io.ReadAll(request.Body)
 			if readErr != nil {
@@ -442,10 +445,9 @@ func TestEnforceRetriesThroughHTTPServer(t *testing.T) {
 			_, _ = io.WriteString(response, http.StatusText(status))
 		},
 	))
-	t.Cleanup(server.Close)
 
 	clock := newReportClock(time.Unix(60_000, 0))
-	transport := newClockedTransport(t, server.Client().Transport, clock.Now)
+	transport := newClockedTransport(t, base, clock.Now)
 	// A Client.Timeout makes net/http set the deprecated Request.Cancel
 	// channel for transports it does not recognize, including Curo.
 	client := &http.Client{Transport: transport, Timeout: time.Minute}

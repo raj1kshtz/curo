@@ -2,9 +2,12 @@ package observe
 
 import (
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"errors"
 	"fmt"
 	"math"
+	"net"
 	"os"
 	"reflect"
 	"sync/atomic"
@@ -111,6 +114,26 @@ func TestClassifyUsesExclusiveOutcomes(t *testing.T) {
 		},
 		"transport error": {
 			result:      Result{Err: genericError},
+			wantOutcome: outcomeTransportFailure,
+			wantSignal:  diagnosisDependencyFailure,
+		},
+		"certificate verification failure": {
+			result: Result{Err: &tls.CertificateVerificationError{
+				Err: x509.UnknownAuthorityError{},
+			}},
+			wantOutcome: outcomeTransportFailure,
+			wantSignal:  diagnosisDependencyFailure,
+		},
+		"host not found": {
+			result: Result{Err: &net.OpError{
+				Op:  "dial",
+				Net: "tcp",
+				Err: &net.DNSError{
+					Err:        "no such host",
+					Name:       "api.example.invalid",
+					IsNotFound: true,
+				},
+			}},
 			wantOutcome: outcomeTransportFailure,
 			wantSignal:  diagnosisDependencyFailure,
 		},

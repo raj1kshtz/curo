@@ -424,6 +424,7 @@ Low-volume dependencies get fewer actions:
 | Reads fail with `ErrTimeout` after a slowdown | The first cut raises the timeout for later reads, up to the ceiling, but reads already in flight keep the timeout they started with. Raise the floor if slow periods are expected, or the ceiling if legitimate reads take longer than it. |
 | The timeout stays high long after one slow response | A slow sample keeps it raised for up to about 30 minutes, until the sample ages out. |
 | Requests to an HTTP/2 dependency keep timing out while other replicas reach it | The base transport keeps sending requests on a connection that stopped responding without closing. [Turn on HTTP/2 health checks](#set-up-the-base-transport). |
+| A dependency that other clients reach is diagnosed `DependencyDown`, or its breaker opens | The client may be misconfigured. Curo counts every transport error as a dependency failure, including a certificate the client cannot verify and a host name that does not resolve. The requests that failed before the breaker opened, and each probe, return the TLS or DNS error. |
 
 ## Known limitations
 
@@ -434,6 +435,9 @@ Low-volume dependencies get fewer actions:
   failing or slow path affects the others.
 - Curo never times breaker probes, and a probe is a real application
   request, which may be a write.
+- Every transport error is a dependency failure, so a client that cannot
+  verify a certificate or resolve a host name sees its dependency diagnosed
+  as down.
 - The mode applies to a whole transport.
 - Logged failures carry no request context, so they cannot be joined to a
   request's trace.

@@ -58,6 +58,13 @@ cancellation does not warm readiness, the overflow aggregate is never
 diagnosed, and diagnosis results expire at most ten seconds after their
 evaluation.
 
+Every transport error is a dependency failure, including a server
+certificate that fails verification and a host name that does not resolve,
+because the error alone cannot tell a misconfigured client from an outage. A
+misconfigured client can therefore see its dependency diagnosed
+`DependencyDown` and, in `Enforce`, its breaker open. Requests that failed
+before the breaker opened, and each probe, still return the original error.
+
 ## Stats
 
 `Stats` provides privacy-safe aggregate visibility:

@@ -2,7 +2,10 @@ package curo
 
 import (
 	"context"
+	"crypto/tls"
+	"errors"
 	"io"
+	"log"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -162,4 +165,60 @@ func TestTransportPassesEveryProtocolThrough(t *testing.T) {
 			t.Errorf("ObservedRequests = %d, want 1", got)
 		}
 	})
+}
+
+// TestUnverifiedCertificateIsDependencyFailure pins the documented rule that a
+// certificate the client cannot verify counts as a dependency failure, while
+// the caller still receives the verification error.
+func TestUnverifiedCertificateIsDependencyFailure(t *testing.T) {
+	t.Parallel()
+
+	server := httptest.NewUnstartedServer(http.HandlerFunc(
+		func(http.ResponseWriter, *http.Request) {
+			t.Error("handler ran for a client that rejected the certificate")
+		},
+	))
+	server.Config.ErrorLog = log.New(io.Discard, "", 0)
+	server.StartTLS()
+	t.Cleanup(server.Close)
+
+	base := &http.Transport{}
+	t.Cleanup(base.CloseIdleConnections)
+	transport, err := New(base)
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	t.Cleanup(func() {
+		if closeErr := transport.Close(); closeErr != nil {
+			t.Errorf("Close() error = %v", closeErr)
+		}
+	})
+
+	request, err := http.NewRequestWithContext(
+		context.Background(),
+		http.MethodGet,
+		server.URL,
+		http.NoBody,
+	)
+	if err != nil {
+		t.Fatalf("NewRequestWithContext() error = %v", err)
+	}
+	response, err := (&http.Client{Transport: transport}).Do(request)
+	if err == nil {
+		closeTestBody(t, response)
+		t.Fatal("Do() error = nil, want a certificate verification error")
+	}
+	var verification *tls.CertificateVerificationError
+	if !errors.As(err, &verification) {
+		t.Fatalf("Do() error = %v, want a *tls.CertificateVerificationError", err)
+	}
+
+	report := transport.Report()
+	if len(report.Targets) != 1 {
+		t.Fatalf("report targets = %+v, want one", report.Targets)
+	}
+	if recent := report.Targets[0].Recent; recent.Attempts != 1 ||
+		recent.DependencyFailures != 1 {
+		t.Errorf("recent evidence = %+v, want one attempt that is a dependency failure", recent)
+	}
 }

@@ -804,6 +804,16 @@ is latency-only, because it shows only that the timeout was too short. Its
 latency sample counts, but the attempt is not relevant evidence, so cutting
 slow reads cannot dilute the failure rates of the attempts around them.
 
+Every transport error is a dependency failure, including TLS certificate
+verification and name-resolution failures. The error alone cannot tell a
+misconfigured client from an outage. A load balancer can send some
+connections to a backend with a bad certificate, where a retry on a new
+connection can succeed, and a DNS server can answer that a name does not
+exist when a Kubernetes headless Service has no ready endpoints. Treating
+these errors as client failures would withhold retries and breakers in those
+outages, so a misconfigured client instead sees its dependency diagnosed as
+down, and the operations guide explains how to recognize that case.
+
 An error takes precedence over a response status, so a response returned
 alongside a transport error cannot be mistaken for rate limiting. Caller-owned
 and latency-only signals remain recorded but do not contribute to readiness or

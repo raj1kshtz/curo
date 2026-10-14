@@ -161,10 +161,18 @@ trace to include in a bug report.
 ## Scope
 
 Curo is an embedded library for outbound `net/http` traffic, and its state
-belongs to one process. Apart from the timeout bounds, every threshold is
-fixed and tuned from evidence. Curo does not provide sidecars, a control
-plane, SDKs for other languages, ingress middleware, gRPC interception, or
-machine-learning policy. The operations guide lists the
+belongs to one process. It wraps the base transport above the wire
+protocol, so HTTP/1.1, HTTPS, and HTTP/2 need no Curo configuration, and
+tests run it over each of them. The operations guide explains how to
+[set up the base transport](docs/guides/operations.md#set-up-the-base-transport),
+including HTTP/2 health checks. Apart from the timeout bounds, every
+threshold is fixed and tuned from evidence.
+
+Curo does not provide sidecars, a control plane, SDKs for other languages,
+ingress middleware, gRPC interception, or machine-learning policy. Outbound
+traffic that does not go through `net/http`, such as database drivers,
+cache and message broker clients, or raw TCP, is outside its scope. The
+operations guide lists the
 [known limitations](docs/guides/operations.md#known-limitations).
 
 ## Documentation
@@ -172,7 +180,7 @@ machine-learning policy. The operations guide lists the
 | Document | Contents |
 | --- | --- |
 | [Package documentation](https://pkg.go.dev/github.com/raj1kshtz/curo) | API reference and runnable examples |
-| [Operations guide](docs/guides/operations.md) | Wiring, deadlines, timeout bounds, rollout, monitoring, error handling, and incident behavior |
+| [Operations guide](docs/guides/operations.md) | Wiring, HTTPS and HTTP/2, deadlines, timeout bounds, rollout, monitoring, error handling, and incident behavior |
 | [Behavior reference](docs/reference/behavior.md) | How each mechanism behaves, its fixed values, and its known limits |
 | [Engine design](docs/design/engine.md) | Runtime architecture, safety boundaries, state ownership, and mitigation design |
 | [Architecture decisions](docs/adr/README.md) | Accepted decisions and the alternatives considered |

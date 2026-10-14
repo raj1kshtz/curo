@@ -1,11 +1,11 @@
 # Operating Curo
 
 This guide explains how to run Curo in a service. It covers wiring Curo,
-bounding requests, choosing timeout bounds, rolling out `Enforce`,
-monitoring, handling Curo's errors, and what to expect when a dependency
-fails. The [behavior reference](../reference/behavior.md) describes each
-mechanism in detail, and the [engine design](../design/engine.md) explains
-the reasons behind it.
+setting up the base transport, bounding requests, choosing timeout bounds,
+rolling out `Enforce`, monitoring, handling Curo's errors, and what to expect
+when a dependency fails. The [behavior reference](../reference/behavior.md)
+describes each mechanism in detail, and the
+[engine design](../design/engine.md) explains the reasons behind it.
 
 Apart from the timeout bounds, every threshold is fixed. This guide therefore
 explains what the thresholds mean in operation rather than how to tune them.
@@ -19,16 +19,17 @@ different numbers.
 ## Contents
 
 1. [Wire one transport](#wire-one-transport)
-2. [Bound every request](#bound-every-request)
-3. [Choose timeout bounds](#choose-timeout-bounds)
-4. [Roll out Enforce](#roll-out-enforce)
-5. [Monitor](#monitor)
-6. [Handle Curo errors](#handle-curo-errors)
-7. [What to expect during incidents](#what-to-expect-during-incidents)
-8. [Restarts and low traffic](#restarts-and-low-traffic)
-9. [Capacity](#capacity)
-10. [Troubleshooting](#troubleshooting)
-11. [Known limitations](#known-limitations)
+2. [Set up the base transport](#set-up-the-base-transport)
+3. [Bound every request](#bound-every-request)
+4. [Choose timeout bounds](#choose-timeout-bounds)
+5. [Roll out Enforce](#roll-out-enforce)
+6. [Monitor](#monitor)
+7. [Handle Curo errors](#handle-curo-errors)
+8. [What to expect during incidents](#what-to-expect-during-incidents)
+9. [Restarts and low traffic](#restarts-and-low-traffic)
+10. [Capacity](#capacity)
+11. [Troubleshooting](#troubleshooting)
+12. [Known limitations](#known-limitations)
 
 ## Wire one transport
 
@@ -82,6 +83,52 @@ Curo the service's logger, which receives only Curo's own failures, as
   simulation, 12,000 one-off hosts sent 11,746 requests to overflow. The
   main dependency kept its protection because it was tracked before the
   registry filled and stayed busy.
+
+## Set up the base transport
+
+Curo wraps the base transport above the wire protocol. The base transport
+keeps its own connections, TLS settings, and protocol negotiation, so
+HTTP/1.1, HTTPS, and HTTP/2 need no Curo configuration. Tests run Curo's
+retries, breakers, and timeouts over each of them.
+
+- `http.DefaultTransport` negotiates HTTP/2 with HTTPS servers that support
+  it. A custom `http.Transport` with its own `TLSClientConfig` or dialer
+  uses only HTTP/1.1 unless it also sets `ForceAttemptHTTP2: true` or
+  enables HTTP/2 in `Protocols`.
+- `http` and `https` are different schemes, so a host reached over both is
+  two targets, with default ports 80 and 443.
+- On Go 1.24 and later, a base transport whose `Protocols` include
+  `UnencryptedHTTP2` but not `HTTP1` sends `http://` requests over HTTP/2
+  without TLS, known as h2c.
+- HTTP/3 transports from other modules also implement `http.RoundTripper`,
+  so Curo can wrap them, but its tests do not cover HTTP/3.
+
+HTTP/2 sends many requests over one connection. If that connection stops
+responding without closing, for example after a load balancer or NAT drops
+it silently, every request on it waits until a timeout ends it, for as long
+as the base transport keeps using the connection. Curo sees requests, not
+connections, so it cannot replace the connection. HTTP/2 health checks let
+the base transport detect and close it, and the next request dials a new
+one. Requests still in flight on it fail with a transport error, which
+`Enforce` can retry when they are replay-safe reads. Health checks are off
+by default. On Go 1.24 and later, turn them on in the base transport:
+
+```go
+base := http.DefaultTransport.(*http.Transport).Clone()
+base.HTTP2 = &http.HTTP2Config{
+    SendPingTimeout: 15 * time.Second,
+    PingTimeout:     5 * time.Second,
+}
+
+transport, err := curo.New(base)
+```
+
+The base transport pings a connection that has received nothing for
+`SendPingTimeout` and closes it if no reply arrives within `PingTimeout`, so
+these values close a dead connection within about 20 seconds of the last
+frame it received. On Go 1.23, `golang.org/x/net/http2.ConfigureTransports`
+returns the HTTP/2 transport, whose `ReadIdleTimeout` and `PingTimeout`
+fields do the same.
 
 ## Bound every request
 
@@ -376,6 +423,8 @@ Low-volume dependencies get fewer actions:
 | `OverflowRequests` keeps growing | The transport sees more than 128 targets, or requests with an invalid scheme, host, or port. Move user-supplied URLs to their own transport. |
 | Reads fail with `ErrTimeout` after a slowdown | The first cut raises the timeout for later reads, up to the ceiling, but reads already in flight keep the timeout they started with. Raise the floor if slow periods are expected, or the ceiling if legitimate reads take longer than it. |
 | The timeout stays high long after one slow response | A slow sample keeps it raised for up to about 30 minutes, until the sample ages out. |
+| Requests to an HTTP/2 dependency keep timing out while other replicas reach it | The base transport keeps sending requests on a connection that stopped responding without closing. [Turn on HTTP/2 health checks](#set-up-the-base-transport). |
+| A dependency that other clients reach is diagnosed `DependencyDown`, or its breaker opens | The client may be misconfigured. Curo counts every transport error as a dependency failure, including a certificate the client cannot verify and a host name that does not resolve. The requests that failed before the breaker opened, and each probe, return the TLS or DNS error. |
 
 ## Known limitations
 
@@ -386,6 +435,9 @@ Low-volume dependencies get fewer actions:
   failing or slow path affects the others.
 - Curo never times breaker probes, and a probe is a real application
   request, which may be a write.
+- Every transport error is a dependency failure, so a client that cannot
+  verify a certificate or resolve a host name sees its dependency diagnosed
+  as down.
 - The mode applies to a whole transport.
 - Logged failures carry no request context, so they cannot be joined to a
   request's trace.

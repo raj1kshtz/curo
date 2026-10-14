@@ -6,7 +6,6 @@ import (
 	"io"
 	"net"
 	"net/http"
-	"net/http/httptest"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -935,7 +934,11 @@ func TestTimeoutBoundsSelectTheTimeout(t *testing.T) {
 func TestTimeoutEndsSlowReadThroughHTTPClient(t *testing.T) {
 	t.Parallel()
 
-	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+	forEachProtocol(t, testTimeoutEndsSlowReadThroughHTTPClient)
+}
+
+func testTimeoutEndsSlowReadThroughHTTPClient(t *testing.T, protocol testProtocol) {
+	server, base := protocol.serve(t, http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		if request.URL.Path == "/slow" {
 			select {
 			case <-request.Context().Done():
@@ -945,12 +948,11 @@ func TestTimeoutEndsSlowReadThroughHTTPClient(t *testing.T) {
 		}
 		_, _ = io.WriteString(writer, "fast")
 	}))
-	defer server.Close()
 
 	clock := newReportClock(time.Unix(60_000, 0))
 	transport := newClockedTransport(
 		t,
-		server.Client().Transport,
+		base,
 		clock.Now,
 		WithTimeoutBounds(50*time.Millisecond, time.Second),
 	)

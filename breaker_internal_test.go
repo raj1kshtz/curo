@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"net/http"
-	"net/http/httptest"
 	"net/url"
 	"strings"
 	"sync"
@@ -457,12 +456,16 @@ func TestRetryWithdrawnWhenBreakerOpensDuringBackoff(t *testing.T) {
 func TestHTTPClientSeesErrBreakerOpen(t *testing.T) {
 	t.Parallel()
 
+	forEachProtocol(t, testHTTPClientSeesErrBreakerOpen)
+}
+
+func testHTTPClientSeesErrBreakerOpen(t *testing.T, protocol testProtocol) {
 	var (
 		mu       sync.Mutex
 		status   = http.StatusServiceUnavailable
 		received int
 	)
-	server := httptest.NewServer(http.HandlerFunc(
+	server, base := protocol.serve(t, http.HandlerFunc(
 		func(response http.ResponseWriter, _ *http.Request) {
 			mu.Lock()
 			received++
@@ -472,10 +475,9 @@ func TestHTTPClientSeesErrBreakerOpen(t *testing.T) {
 			response.WriteHeader(current)
 		},
 	))
-	t.Cleanup(server.Close)
 
 	clock := newReportClock(time.Unix(60_000, 0))
-	transport := newClockedTransport(t, server.Client().Transport, clock.Now)
+	transport := newClockedTransport(t, base, clock.Now)
 	// A Client.Timeout makes net/http set the deprecated Request.Cancel
 	// channel for transports it does not recognize, including Curo.
 	client := &http.Client{Transport: transport, Timeout: time.Minute}

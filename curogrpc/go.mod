@@ -5,7 +5,7 @@ go 1.26.0
 require (
 	github.com/raj1kshtz/curo v0.2.0
 	google.golang.org/grpc v1.84.0
-	google.golang.org/protobuf v1.36.11
+	google.golang.org/protobuf v1.36.12
 )
 
 require (

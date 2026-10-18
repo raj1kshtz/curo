@@ -1,0 +1,17 @@
+// curogrpc's exported API as go/doc sees it, without comments. It only
+// changes when an exported declaration is added, removed, or changed. Review
+// the diff against ADR-0010, then regenerate it with:
+// go test -run '^TestAPI$' -update .
+
+package curogrpc
+
+func NewUnaryClientInterceptor(
+	engine *curo.Engine,
+	options ...Option,
+) (grpc.UnaryClientInterceptor, error)
+
+type Option interface {
+	// contains filtered or unexported methods
+}
+
+func WithReadMethods(methods ...string) Option

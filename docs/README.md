@@ -8,6 +8,7 @@ Curo documentation is organized by purpose:
 | [Engine design](design/engine.md) | Runtime architecture, safety boundaries, state, and mitigation design |
 | [Operations guide](guides/operations.md) | Wiring, other calls through an `Engine`, deadlines, timeout bounds, rollout, monitoring, error handling, and incident behavior |
 | [Behavior reference](reference/behavior.md) | How each mechanism behaves, its fixed values, and its known limits |
+| [curogrpc](../curogrpc/README.md) | The gRPC client interceptor module: setup, targets, read-only methods, status codes, and limits |
 | [Project governance](project/governance.md) | Current decision-making and release process |
 | [Maintainers](project/maintainers.md) | Current project maintainers |
 

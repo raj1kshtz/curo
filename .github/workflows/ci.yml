@@ -71,9 +71,79 @@ jobs:
         if: matrix.os == 'ubuntu-latest' && matrix.go == '1.26'
         run: go test -run '^$' -bench . -benchtime 1x ./...
 
+  # curogrpc is a separate module, which ./... in the root does not include.
+  curogrpc:
+    name: curogrpc (go ${{ matrix.go }}, ${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        working-directory: curogrpc
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        go: ["1.26", "1.27"]
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version: ${{ matrix.go }}
+          check-latest: true
+          cache: false
+
+      - name: Verify go.mod is tidy
+        if: matrix.os == 'ubuntu-latest' && matrix.go == '1.26'
+        run: |
+          go mod tidy
+          git diff --exit-code -- go.mod go.sum
+
+      - name: Build
+        run: go build ./...
+
+      - name: Vet
+        run: go vet ./...
+
+      - name: Test
+        run: go test -race -count=1 ./...
+
+      - name: Coverage
+        if: matrix.os == 'ubuntu-latest' && matrix.go == '1.26'
+        run: |
+          go test -count=1 -coverprofile=coverage.out ./...
+          go tool cover -func=coverage.out | tail -n 1
+          awk 'NR > 1 { statements[$1] = $2; hits[$1] += $3 }
+            END {
+              for (block in statements) {
+                if (statements[block] > 0 && hits[block] == 0) {
+                  print "::error::statements never ran at " block
+                  missed++
+                }
+              }
+              exit (missed > 0)
+            }' coverage.out
+
+      # The steps above use the root module version that curogrpc's go.mod
+      # requires. This one uses the root module in this commit, so that a root
+      # change that would break curogrpc fails here.
+      - name: Test against the root module in this commit
+        if: matrix.os == 'ubuntu-latest' && matrix.go == '1.26'
+        working-directory: .
+        run: |
+          go work init . ./curogrpc
+          go test -count=1 ./curogrpc/...
+
   lint:
-    name: lint
+    name: lint (${{ matrix.module }})
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - module: curo
+            directory: .
+          - module: curogrpc
+            directory: curogrpc
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-go@v7
@@ -84,11 +154,23 @@ jobs:
         uses: golangci/golangci-lint-action@v9
         with:
           version: v2.14.0
+          working-directory: ${{ matrix.directory }}
           args: --timeout=5m
 
   vuln:
-    name: govulncheck
+    name: govulncheck (${{ matrix.module }})
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - module: curo
+            directory: .
+          - module: curogrpc
+            directory: curogrpc
+    defaults:
+      run:
+        working-directory: ${{ matrix.directory }}
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-go@v7
@@ -129,7 +211,7 @@ jobs:
   ci-success:
     name: ci-success
     runs-on: ubuntu-latest
-    needs: [test, lint, vuln, dco]
+    needs: [test, curogrpc, lint, vuln, dco]
     if: always()
     steps:
       - name: Fail if any dependency failed or was cancelled

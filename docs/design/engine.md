@@ -87,8 +87,9 @@ The engine does not provide:
 - SDKs for languages other than Go.
 - Fleet-wide state or cross-process retry coordination.
 - Ingress middleware, or protocol interception in the root module. Adapters
-  that need a third-party API, such as a gRPC interceptor, live in separate
-  modules, as [ADR-0012](../adr/0012-engine-and-adapter-modules.md) records.
+  that need a third-party API, such as the gRPC interceptor of `curogrpc`,
+  live in separate modules, as
+  [ADR-0012](../adr/0012-engine-and-adapter-modules.md) records.
 - Automatic coverage of outbound traffic that does not go through
   `net/http`. Database queries, cache and message broker commands, and other
   calls are covered only when the application runs them through `Engine`.

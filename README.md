@@ -26,7 +26,9 @@ calls and database queries.
   on the standard library.
 - **Any dependency.** `curo.NewEngine` brings the same controls to calls that
   do not go through `net/http`, which the application runs through
-  `Engine.Do` and classifies itself.
+  `Engine.Do` and classifies itself. The separate
+  [`curogrpc`](curogrpc/README.md) module does this for unary gRPC calls with
+  one interceptor.
 - **Safe rollout.** `Observe`, the default mode, reports what Curo would do
   without changing any request. `Enforce` applies the controls, `Off` passes
   requests straight through, and `SetMode` switches modes at runtime.
@@ -160,6 +162,30 @@ down, and `curo.ErrTimeout` when Curo ended a read-only attempt. The
 [operations guide](docs/guides/operations.md#run-other-calls-through-an-engine)
 explains how to classify errors and when a call may be retried.
 
+For gRPC, the [`curogrpc`](curogrpc/README.md) module provides a unary client
+interceptor that runs each call through an `Engine`. It names each target
+from the channel, finds read-only methods in a list or in their protos, and
+classifies status codes:
+
+```go
+interceptor, err := curogrpc.NewUnaryClientInterceptor(engine)
+if err != nil {
+    return err
+}
+
+conn, err := grpc.NewClient(target,
+    grpc.WithTransportCredentials(creds),
+    grpc.WithChainUnaryInterceptor(interceptor),
+)
+```
+
+`curogrpc` is a separate module, so only applications that import it depend
+on grpc-go:
+
+```sh
+go get github.com/raj1kshtz/curo/curogrpc@latest
+```
+
 ## How it works
 
 ![Curo system context](docs/design/diagrams/system-context.svg)
@@ -209,8 +235,9 @@ threshold is fixed and tuned from evidence.
 Curo does not provide sidecars, a control plane, SDKs for other languages,
 ingress middleware, or machine-learning policy. It covers calls that do not
 go through `net/http`, such as database queries or cache commands, only when
-the application runs them through an `Engine`, and it does not cover streams
-or long-lived connections. The operations guide lists the
+the application runs them through an `Engine`, or through `curogrpc` for
+unary gRPC calls, and it does not cover streams or long-lived connections.
+The operations guide lists the
 [known limitations](docs/guides/operations.md#known-limitations).
 
 ## Documentation
@@ -218,6 +245,7 @@ or long-lived connections. The operations guide lists the
 | Document | Contents |
 | --- | --- |
 | [Package documentation](https://pkg.go.dev/github.com/raj1kshtz/curo) | API reference and runnable examples |
+| [curogrpc](curogrpc/README.md) | The gRPC client interceptor module: setup, targets, read-only methods, status codes, and limits |
 | [Operations guide](docs/guides/operations.md) | Wiring, HTTPS and HTTP/2, other calls through an `Engine`, deadlines, timeout bounds, rollout, monitoring, error handling, and incident behavior |
 | [Behavior reference](docs/reference/behavior.md) | How each mechanism behaves, its fixed values, and its known limits |
 | [Engine design](docs/design/engine.md) | Runtime architecture, safety boundaries, state ownership, and mitigation design |
@@ -233,7 +261,8 @@ Curo follows [Semantic Versioning](https://semver.org/).
 release promises: the exported API and its documented behavior, `errors.Is`
 identities, and the names and JSON encodings of modes and reports. Adaptive
 tuning may improve in any minor release. Curo supports Go 1.23 and later, and
-CI tests Go 1.23 and the two most recent Go releases.
+CI tests Go 1.23 and the two most recent Go releases. `curogrpc` has its own
+versions, tagged `curogrpc/vX.Y.Z`, and requires Go 1.26 or later.
 
 ## Contributing
 

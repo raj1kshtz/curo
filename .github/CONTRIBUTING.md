@@ -97,12 +97,40 @@ never change an existing row.
 CI runs the tests on Go 1.23, the minimum version in `go.mod`, and on the two
 most recent Go releases.
 
+`curogrpc` is a separate module with its own `go.mod`, which `./...` in the
+repository root does not include. Run the same checks in its directory, where
+`golangci-lint` finds the root configuration:
+
+```sh
+cd curogrpc
+go vet ./...
+go test -race ./...
+golangci-lint run
+govulncheck ./...
+```
+
+`curogrpc` builds against the root module version that its `go.mod`
+requires, and CI also tests it against the root module of the pull request.
+To do the same locally, create a workspace, which `.gitignore` keeps out of
+commits:
+
+```sh
+go work init . ./curogrpc
+go test ./curogrpc/...
+```
+
+Remove `go.work` afterwards: in a workspace, `./...` in the root also matches
+`curogrpc`, which needs a newer Go version than the root module. `curogrpc`
+has its own `testdata/api.golden` and changelog, and CI tests it on Go 1.26,
+the minimum in its `go.mod`, and on the two most recent Go releases.
+
 ## Documentation
 
 - Keep architecture diagram sources and rendered SVGs synchronized. Rendering
   instructions live in
   [`docs/design/diagrams/README.md`](../docs/design/diagrams/README.md).
-- Update related ADRs and the changelog in the same pull request.
+- Update related ADRs, and the changelog of each module that changes, in the
+  same pull request.
 - Update the [behavior reference](../docs/reference/behavior.md) when a
   mechanism's behavior changes, and the
   [operations guide](../docs/guides/operations.md) when the advice for

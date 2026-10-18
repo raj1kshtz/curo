@@ -47,7 +47,9 @@ Go versions are supported.
 A maintainer makes a release in these steps:
 
 1. Merge a pull request that moves the `Unreleased` changelog entries into a
-   dated section for the new version and updates the comparison links.
+   dated section for the new version and updates the comparison links. For a
+   new minor version, it also updates the supported versions in
+   [SECURITY.md](../../.github/SECURITY.md).
 2. Check out the release commit, the head of `main`, in a clean worktree,
    and confirm that CI passed for it:
 
@@ -86,10 +88,33 @@ A maintainer makes a release in these steps:
    GOPROXY=https://proxy.golang.org go list -m github.com/raj1kshtz/curo@vX.Y.Z
    ```
 
-A repository ruleset blocks moving or deleting `v*` tags. Repository admins
-can bypass it, but ADR-0010 forbids moving or deleting a published tag in any
-case. A broken release is corrected by a new version whose `go.mod` retracts
-it.
+Adapter modules, such as `curogrpc`, are released on their own, in the same
+steps with these differences:
+
+- The pull request dates the module's own changelog, such as
+  `curogrpc/CHANGELOG.md`.
+- `gorelease` runs in the module's directory, with `-base=none` for the
+  module's first release.
+- The tag and the release name start with the module's directory, such as
+  `curogrpc/vX.Y.Z`, and the release is not marked as the latest, which stays
+  a release of the root module:
+
+  ```sh
+  git tag -a curogrpc/vX.Y.Z -m curogrpc/vX.Y.Z "$commit"
+  git push origin curogrpc/vX.Y.Z
+  gh release create curogrpc/vX.Y.Z --verify-tag --latest=false \
+    --title curogrpc/vX.Y.Z --notes-file notes.md
+  GOPROXY=https://proxy.golang.org \
+    go list -m github.com/raj1kshtz/curo/curogrpc@vX.Y.Z
+  ```
+
+An adapter that needs a new root API waits for a root release that has it,
+and then raises its requirement on the root module.
+
+A repository ruleset blocks moving or deleting `v*` and `curogrpc/v*` tags.
+Repository admins can bypass it, but ADR-0010 forbids moving or deleting a
+published tag in any case. A broken release is corrected by a new version
+whose `go.mod` retracts it.
 
 ## Changes to governance
 

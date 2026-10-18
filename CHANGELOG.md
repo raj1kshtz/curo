@@ -1,6 +1,8 @@
 # Changelog
 
-All notable changes to this project are documented in this file.
+All notable changes to the root module, `github.com/raj1kshtz/curo`, are
+documented in this file. The `curogrpc` module has its own
+[changelog](curogrpc/CHANGELOG.md).
 
 The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project

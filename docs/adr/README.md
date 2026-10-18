@@ -31,6 +31,8 @@ together. Code and API documentation define the exact implementation.
     [Version Releases with an Explicit Compatibility Promise](0010-versioning-and-compatibility.md)
 11. **ADR-0011 - Accepted**
     [Log Internal Failures Through log/slog](0011-internal-failure-logging.md)
+12. **ADR-0012 - Accepted**
+    [Extend Curo Beyond net/http Through an Engine and Adapter Modules](0012-engine-and-adapter-modules.md)
 
 ## Lifecycle
 

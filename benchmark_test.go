@@ -56,3 +56,37 @@ func BenchmarkTransportRoundTrip(b *testing.B) {
 		})
 	}
 }
+
+func BenchmarkEngineDo(b *testing.B) {
+	ctx := context.Background()
+	call := curo.Call{
+		Scheme:     "grpc",
+		Host:       "example.com",
+		Port:       443,
+		ReadOnly:   true,
+		ReplaySafe: true,
+	}
+	attempt := func(context.Context) error {
+		return nil
+	}
+
+	for _, mode := range []curo.Mode{curo.Off, curo.Observe, curo.Enforce} {
+		b.Run(mode.String(), func(b *testing.B) {
+			engine, newErr := curo.NewEngine(curo.WithMode(mode))
+			if newErr != nil {
+				b.Fatalf("NewEngine() error = %v", newErr)
+			}
+			if doErr := engine.Do(ctx, call, attempt); doErr != nil {
+				b.Fatalf("warm Do() error = %v", doErr)
+			}
+
+			b.ReportAllocs()
+			b.ResetTimer()
+			for range b.N {
+				if doErr := engine.Do(ctx, call, attempt); doErr != nil {
+					b.Fatalf("Do() error = %v", doErr)
+				}
+			}
+		})
+	}
+}

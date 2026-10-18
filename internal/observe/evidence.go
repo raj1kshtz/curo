@@ -40,7 +40,7 @@ type outcome uint8
 
 const (
 	outcomeSuccess outcome = iota
-	outcomeHTTPFailure
+	outcomeFailedResponse
 	outcomeTransportFailure
 	outcomeCanceled
 	outcomeTimedOut
@@ -287,7 +287,7 @@ func classify(result Result, contextErr error, latency time.Duration) observatio
 		result.StatusCode >= 200 && result.StatusCode < 400:
 		value.outcome = outcomeSuccess
 	case result.Err == nil && result.HasResponse:
-		value.outcome = outcomeHTTPFailure
+		value.outcome = outcomeFailedResponse
 	case result.Err == nil:
 		value.outcome = outcomeTransportFailure
 	case resultSignals.deadline:
@@ -318,6 +318,53 @@ func classify(result Result, contextErr error, latency time.Duration) observatio
 		value.latencyBucket = latencyBucket(latency)
 	}
 	value.signal = classifyDiagnosisSignal(value, result, contextSignals)
+
+	return value
+}
+
+// classifyOutcome classifies an Engine call's attempt from the outcome that
+// the call reported. An attempt that failed after its caller canceled it or
+// its caller's deadline passed is the caller's, as an HTTP request's would be,
+// whatever the call reported. Every attempt that the dependency answered is
+// a latency sample.
+func classifyOutcome(
+	result Result,
+	contextErr error,
+	latency time.Duration,
+) observation {
+	if result.Err != nil && contextErr != nil {
+		if inspectError(contextErr).deadline {
+			return observation{
+				outcome:       outcomeTimedOut,
+				timeoutSource: timeoutCaller,
+				signal:        diagnosisCallerOwned,
+				hasTimeout:    true,
+			}
+		}
+
+		return observation{outcome: outcomeCanceled, signal: diagnosisCallerOwned}
+	}
+
+	value := observation{
+		outcome:       outcomeFailedResponse,
+		latencyBucket: latencyBucket(max(latency, 0)),
+		hasLatency:    true,
+	}
+	switch result.Outcome {
+	case OutcomeSuccess:
+		value.outcome = outcomeSuccess
+	case OutcomeClientFailure:
+		value.signal = diagnosisClientFailure
+	case OutcomeRateLimited:
+		value.signal = diagnosisRateLimited
+	case OutcomeDependencyFailure:
+		value.signal = diagnosisDependencyFailure
+	default:
+		return observation{
+			outcome: outcomeTransportFailure,
+			signal:  diagnosisDependencyFailure,
+		}
+	}
 
 	return value
 }

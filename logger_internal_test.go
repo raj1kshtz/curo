@@ -75,7 +75,7 @@ func TestFailureLogNamesTheFailedStage(t *testing.T) {
 		"retry commit": {
 			fail: func(t *testing.T, transport *Transport) {
 				permitted, _ := transport.commitRetry(
-					newLoggerRequest(t),
+					newLoggerRequest(t).Context(),
 					panickingConfirmStages{},
 					requestState{},
 					transport.authority.Load(),

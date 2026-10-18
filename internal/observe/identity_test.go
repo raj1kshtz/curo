@@ -199,6 +199,146 @@ func TestNormalizeTarget(t *testing.T) {
 	}
 }
 
+func TestNormalizeCall(t *testing.T) {
+	t.Parallel()
+
+	tests := map[string]struct {
+		call  Call
+		want  targetKey
+		valid bool
+	}{
+		"grpc": {
+			call: Call{Scheme: "GRPC", Hostname: "API.Example.", Port: 443},
+			want: targetKey{
+				host:   "api.example",
+				port:   443,
+				scheme: schemeGRPC,
+				method: MethodRead,
+			},
+			valid: true,
+		},
+		"lowercase scheme": {
+			call: Call{
+				Scheme:   "postgres",
+				Hostname: "db.internal",
+				Port:     5432,
+				Method:   MethodWrite,
+			},
+			want: targetKey{
+				host:   "db.internal",
+				port:   5432,
+				scheme: "postgres",
+				method: MethodWrite,
+			},
+			valid: true,
+		},
+		"mixed case scheme": {
+			call: Call{Scheme: "Redis+TLS", Hostname: "cache.internal", Port: 6380},
+			want: targetKey{
+				host:   "cache.internal",
+				port:   6380,
+				scheme: "redis+tls",
+				method: MethodRead,
+			},
+			valid: true,
+		},
+		"scheme punctuation": {
+			call: Call{Scheme: "a1.b-c+d", Hostname: "192.0.2.1", Port: 1},
+			want: targetKey{
+				host:   "192.0.2.1",
+				port:   1,
+				scheme: "a1.b-c+d",
+				method: MethodRead,
+			},
+			valid: true,
+		},
+		"longest scheme": {
+			call: Call{
+				Scheme:   strings.Repeat("s", maxSchemeBytes),
+				Hostname: "api.example",
+				Port:     443,
+			},
+			want: targetKey{
+				host:   "api.example",
+				port:   443,
+				scheme: strings.Repeat("s", maxSchemeBytes),
+				method: MethodRead,
+			},
+			valid: true,
+		},
+		"http default port": {
+			call: Call{Scheme: "HTTP", Hostname: "api.example"},
+			want: targetKey{
+				host:   "api.example",
+				port:   80,
+				scheme: schemeHTTP,
+				method: MethodRead,
+			},
+			valid: true,
+		},
+		"https explicit port": {
+			call: Call{Scheme: "https", Hostname: "2001:DB8::1", Port: 8443},
+			want: targetKey{
+				host:   "2001:db8::1",
+				port:   8443,
+				scheme: schemeHTTPS,
+				method: MethodRead,
+			},
+			valid: true,
+		},
+		"missing port": {
+			call: Call{Scheme: "grpc", Hostname: "api.example"},
+		},
+		"empty scheme": {
+			call: Call{Hostname: "api.example", Port: 443},
+		},
+		"long scheme": {
+			call: Call{
+				Scheme:   strings.Repeat("s", maxSchemeBytes+1),
+				Hostname: "api.example",
+				Port:     443,
+			},
+		},
+		"scheme starting with a digit": {
+			call: Call{Scheme: "9p", Hostname: "api.example", Port: 564},
+		},
+		"scheme starting with punctuation": {
+			call: Call{Scheme: "+grpc", Hostname: "api.example", Port: 443},
+		},
+		"scheme with an underscore": {
+			call: Call{Scheme: "my_db", Hostname: "api.example", Port: 443},
+		},
+		"scheme with a non-ASCII letter": {
+			call: Call{Scheme: "gr\u00e9pc", Hostname: "api.example", Port: 443},
+		},
+		"invalid hostname": {
+			call: Call{Scheme: "grpc", Hostname: "api example", Port: 443},
+		},
+		"invalid method": {
+			call: Call{
+				Scheme:   "grpc",
+				Hostname: "api.example",
+				Port:     443,
+				Method:   MethodOther + 1,
+			},
+		},
+	}
+
+	for name, test := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			got, valid := normalizeCall(test.call)
+			if valid != test.valid {
+				t.Fatalf("normalizeCall() valid = %t, want %t", valid, test.valid)
+			}
+			if got != test.want {
+				t.Errorf("normalizeCall() = %#v, want %#v", got, test.want)
+			}
+		})
+	}
+}
+
 func TestClassifyMethodUsesClosedClasses(t *testing.T) {
 	t.Parallel()
 
@@ -254,6 +394,29 @@ func TestRetainedTargetKeyDetachesHostnameStorage(t *testing.T) {
 	}
 }
 
+func TestRetainedTargetKeyDetachesCallSchemeStorage(t *testing.T) {
+	t.Parallel()
+
+	scheme := strings.Clone("postgres")
+	key, valid := normalizeCall(Call{Scheme: scheme, Hostname: "db.internal", Port: 5432})
+	if !valid {
+		t.Fatal("normalizeCall() valid = false, want true")
+	}
+	if unsafe.StringData(key.scheme) != unsafe.StringData(scheme) {
+		t.Error("lowercase call scheme was copied before the target was retained")
+	}
+	if retained := key.retained(); unsafe.StringData(retained.scheme) == unsafe.StringData(scheme) {
+		t.Error("retained scheme shares caller string storage")
+	}
+
+	for _, interned := range []string{schemeHTTP, schemeHTTPS, schemeGRPC} {
+		key := targetKey{host: "example.com", scheme: interned}
+		if retained := key.retained(); unsafe.StringData(retained.scheme) != unsafe.StringData(interned) {
+			t.Errorf("retained %s scheme was copied", interned)
+		}
+	}
+}
+
 func TestTargetKeyHashIncludesEveryDimension(t *testing.T) {
 	t.Parallel()
 
@@ -269,6 +432,8 @@ func TestTargetKeyHashIncludesEveryDimension(t *testing.T) {
 		{host: "example.com", port: 8443, scheme: schemeHTTPS, method: MethodRead},
 		{host: "example.com", port: 443, scheme: schemeHTTP, method: MethodRead},
 		{host: "example.com", port: 443, scheme: schemeHTTPS, method: MethodWrite},
+		{host: "example.com", port: 443, scheme: schemeGRPC, method: MethodRead},
+		{host: "example.com", port: 443, scheme: "grpcs", method: MethodRead},
 	}
 
 	hashes := make(map[uint64]struct{}, len(keys))
@@ -298,6 +463,16 @@ func TestTargetKeyLessIsDeterministic(t *testing.T) {
 			left:  targetKey{scheme: schemeHTTP},
 			right: base,
 			want:  true,
+		},
+		{
+			left:  targetKey{scheme: schemeGRPC, host: "z.example"},
+			right: base,
+			want:  true,
+		},
+		{
+			left:  targetKey{scheme: "postgres"},
+			right: base,
+			want:  false,
 		},
 		{
 			left:  targetKey{scheme: schemeHTTPS, host: "a.example"},

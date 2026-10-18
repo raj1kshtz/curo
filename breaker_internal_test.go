@@ -197,6 +197,75 @@ func TestFailedProbeKeepsBreakerOpenLonger(t *testing.T) {
 	harness.assertRetryStats("failed probe", 0, 0, 0, 0)
 }
 
+// failingPostflightStages fails every postflight before it records the
+// attempt.
+type failingPostflightStages struct {
+	adaptiveStages
+}
+
+func (failingPostflightStages) postflight(requestState, attemptResult) (retryGrant, error) {
+	return retryGrant{}, errors.New("postflight failed")
+}
+
+func TestFailedPostflightSettlesProbeAsInconclusive(t *testing.T) {
+	t.Parallel()
+
+	harness := newRetryHarness(t)
+	harness.openBreaker()
+	harness.clock.Advance(breaker.BaseCooldown)
+	adaptive, ok := harness.transport.stages.(adaptiveStages)
+	if !ok {
+		t.Fatalf("stages = %T, want adaptiveStages", harness.transport.stages)
+	}
+	harness.transport.stages = failingPostflightStages{adaptive}
+	harness.expectStatus(http.StatusOK, http.StatusOK)
+	harness.transport.stages = adaptive
+
+	// The probe recorded nothing, so the breaker reopens for the base
+	// cooldown instead of waiting for the probe's lease to expire.
+	harness.clock.Advance(breaker.BaseCooldown - time.Nanosecond)
+	harness.assertRejected(newInternalReportRequest(t, retryTestURL))
+	harness.clock.Advance(time.Nanosecond)
+	harness.expectStatus(http.StatusOK, http.StatusOK)
+	harness.assertBreakerStats("inconclusive probe", 1, 2, 1)
+	if got := harness.transport.Stats().InternalFailures; got != 1 {
+		t.Errorf("InternalFailures = %d, want 1", got)
+	}
+}
+
+func TestPanickingProbeSettlesAsInconclusive(t *testing.T) {
+	t.Parallel()
+
+	harness := newRetryHarness(t)
+	harness.openBreaker()
+	harness.clock.Advance(breaker.BaseCooldown)
+	harness.script(func(*http.Request) (*http.Response, error) {
+		panic(errBasePanic)
+	})
+	func() {
+		defer func() {
+			//nolint:errorlint // The recovered value is the panic value itself.
+			if recovered := recover(); recovered != errBasePanic {
+				t.Errorf("recovered %v, want the base transport's panic", recovered)
+			}
+		}()
+		response, err := harness.transport.RoundTrip(newInternalReportRequest(t, retryTestURL))
+		closeTestBody(t, response)
+		t.Errorf("RoundTrip() = %v, %v, want the base transport's panic", response, err)
+	}()
+
+	// The probe returned no result, so the breaker reopens for the base
+	// cooldown instead of waiting for the probe's lease to expire.
+	harness.clock.Advance(breaker.BaseCooldown - time.Nanosecond)
+	harness.assertRejected(newInternalReportRequest(t, retryTestURL))
+	harness.clock.Advance(time.Nanosecond)
+	harness.expectStatus(http.StatusOK, http.StatusOK)
+	harness.assertBreakerStats("panicking probe", 1, 2, 1)
+	if got := harness.transport.Stats().InternalFailures; got != 0 {
+		t.Errorf("InternalFailures = %d, want 0", got)
+	}
+}
+
 func TestConcurrentRequestsAdmitExactlyOneProbe(t *testing.T) {
 	t.Parallel()
 

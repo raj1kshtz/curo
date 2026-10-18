@@ -11,14 +11,15 @@ describes every exported identifier.
 ## Contents
 
 1. [Transport and modes](#transport-and-modes)
-2. [Observation](#observation)
-3. [Readiness and diagnosis](#readiness-and-diagnosis)
-4. [Stats](#stats)
-5. [Report](#report)
-6. [Retries](#retries)
-7. [Dependency breakers](#dependency-breakers)
-8. [Adaptive timeouts](#adaptive-timeouts)
-9. [Failure containment](#failure-containment)
+2. [Engine calls](#engine-calls)
+3. [Observation](#observation)
+4. [Readiness and diagnosis](#readiness-and-diagnosis)
+5. [Stats](#stats)
+6. [Report](#report)
+7. [Retries](#retries)
+8. [Dependency breakers](#dependency-breakers)
+9. [Adaptive timeouts](#adaptive-timeouts)
+10. [Failure containment](#failure-containment)
 
 ## Transport and modes
 
@@ -41,11 +42,94 @@ it does not retry, fail fast, or send with an adaptive timeout. `Observe` and
 control candidates; `Off`, closed, and self-disabled transports use direct
 pass-through without collecting new evidence.
 
+## Engine calls
+
+An `Engine` applies Curo to calls that do not go through `net/http`, such as
+gRPC calls and database queries. `NewEngine` takes the same options as `New`,
+and an `Engine` has the same modes, `Stats`, `Report`, and `Close` as a
+transport, with targets, evidence, and budgets of its own. `Engine.Do` runs a
+call's attempt and returns its error:
+
+```go
+err := engine.Do(ctx, curo.Call{
+    Classify: classify,
+    Scheme:   "postgres",
+    Host:     "db.internal",
+    Port:     5432,
+    ReadOnly: true,
+}, func(ctx context.Context) error {
+    rows, err := db.QueryContext(ctx, query)
+    if err != nil {
+        return err
+    }
+    defer rows.Close()
+    for rows.Next() {
+        // Scan each row before returning.
+    }
+    return rows.Err()
+})
+```
+
+The call's `Scheme`, `Host`, and `Port` name its target, with the read class
+when `ReadOnly` is set and the write class otherwise. The scheme is any URI
+scheme of at most 32 bytes, in any letter case. Only `http` and `https` have
+default ports, so any other call without a port uses the overflow aggregate,
+and so does a call with an invalid scheme or host.
+
+A nil error is a success. `Classify` maps any other error to a
+`Classification`, whose `Outcome` decides how the attempt counts:
+
+| Outcome | Counts like | Latency sample | `Retryable` applies |
+| --- | --- | --- | --- |
+| `OutcomeSuccess` | A 2xx response | Yes | No |
+| `OutcomeClientFailure` | A 4xx response other than 429 | Yes | No |
+| `OutcomeRateLimited` | A 429 response | Yes | No |
+| `OutcomeDependencyFailure` | A 5xx response | Yes | Yes |
+| `OutcomeTransportFailure` | A transport error | No | Yes |
+
+A nil `Classify`, `OutcomeUnspecified`, and any value that is not an `Outcome`
+constant count as a transport failure that is not retryable, so every error
+counts against the dependency. A failed attempt whose caller canceled it, or
+whose caller's deadline expired, is the caller's whatever `Classify` reports.
+`Classify` runs at most once per attempt, after the attempt returns, and
+never for an attempt that the adaptive timeout ended. Calls can run it
+concurrently, so it should be fast and free of side effects.
+
+In `Enforce`, an `Engine` applies the controls that a transport applies to
+requests:
+
+- **Retries.** A call is retried at most once when `ReplaySafe` is set,
+  `Classify` marked its dependency or transport failure `Retryable`, and the
+  other conditions of a request [retry](#retries) hold. The retry runs the
+  attempt again after the backoff, and `Do` returns the retry's error. Set
+  `ReplaySafe` only when running the attempt twice is harmless, and not when
+  the client already retries, because retries at both layers multiply.
+- **Breakers.** While the target's [breaker](#dependency-breakers) is open,
+  `Do` returns `curo.ErrBreakerOpen` without running the attempt. A probe
+  closes the breaker when it succeeds or fails as a client failure, and is a
+  failed probe when it fails as a rate limit, a dependency failure, or a
+  transport failure.
+- **Timeouts.** A read-only call, other than a probe, gets its target's
+  [adaptive timeout](#adaptive-timeouts), learned from the latency of whole
+  attempts. The attempt runs with a derived context, which Curo cancels when
+  the timeout expires or the attempt returns. `Do` waits for the attempt, and
+  returns `curo.ErrTimeout` without retrying if the timeout expired first,
+  even when the attempt succeeded. An attempt must therefore finish using its
+  context before it returns, by reading every row or message it needs.
+
+`Do` returns `ErrBreakerOpen` and `ErrTimeout` as they are, and every other
+error as the attempt returned it. A nil attempt returns an error. A nil
+context, a nil or zero `Engine`, `Off`, a closed `Engine`, and a
+self-disabled `Engine` run the attempt once, directly. A panic in the attempt
+propagates unchanged, and a panic in `Classify` is
+[contained](#failure-containment).
+
 ## Observation
 
-Observation keys include only a normalized HTTP or HTTPS scheme, bounded
-hostname, effective port, and closed method class. Paths, queries, URL user
-information, headers, bodies, and raw error text are excluded. One transport
+Observation keys include only a normalized scheme, bounded hostname,
+effective port, and closed method class. A request's scheme is HTTP or HTTPS,
+and an `Engine` call's is its own. Paths, queries, URL user information,
+headers, bodies, and raw error text are excluded. One transport or engine
 admits at most 128 regular targets and uses one non-actionable overflow
 aggregate for additional or invalid identities.
 
@@ -339,7 +423,8 @@ The transport separates optional Curo-owned preflight and postflight work
 from the unguarded base transport call, so the base transport keeps its own
 panic semantics. A preflight failure falls back to the original request,
 while a postflight or retry-preparation failure preserves the captured
-transport result. Three internal failures within one minute permanently
+transport result. An `Engine` runs its attempts outside the guard in the same
+way. Three internal failures within one minute permanently
 select direct pass-through for that instance, and a reset remains deferred,
 as the [engine design](../design/engine.md) records. `Stats` counts the
 failures in `InternalFailures` and reports self-disable in `SelfDisabled`.
@@ -350,8 +435,8 @@ from the application. Each failure belongs to one stage:
 | Stage | Work |
 | --- | --- |
 | `preflight` | Identifying the target, breaker admission, and the timeout lookup before the first attempt |
-| `postflight` | Classifying the result, including calls to the error's `Unwrap`, `Is`, and `Timeout` methods, and updating evidence, breakers, and retry budgets |
-| `retry` | The backoff, the request's `GetBody`, and the final checks before a retry |
+| `postflight` | Classifying the result, including calls to the error's `Unwrap`, `Is`, and `Timeout` methods and to an `Engine` call's `Classify`, and updating evidence, breakers, and retry budgets |
+| `retry` | The backoff, the request's `GetBody`, the final checks before a retry, and the `Classify` call that counts an `Engine` retry's success |
 | `timeout` | Starting, expiring, and settling adaptive timeouts |
 | `body` | Closing a body that Curo did not send or discarded, with its `Close` method |
 | `report` | Building a `Report` |

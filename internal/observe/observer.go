@@ -25,26 +25,77 @@ type Request struct {
 	Port     string
 }
 
+// Call is the bounded target metadata of an Engine call.
+type Call struct {
+	Context  context.Context
+	Scheme   string
+	Hostname string
+
+	// Port is the target's port. Zero selects the default port of http and
+	// https, and is not valid for any other scheme.
+	Port   uint16
+	Method MethodClass
+}
+
+// Outcome is how an Engine call's attempt ended, as the call classified it.
+type Outcome uint8
+
+const (
+	// OutcomeUnclassified marks an HTTP result, which Finish classifies from
+	// its error, status code, and response.
+	OutcomeUnclassified Outcome = iota
+
+	// OutcomeSuccess is an attempt that the dependency served.
+	OutcomeSuccess
+
+	// OutcomeClientFailure is an attempt that the dependency answered with a
+	// failure caused by the request.
+	OutcomeClientFailure
+
+	// OutcomeRateLimited is an attempt that the dependency refused because of
+	// a rate limit.
+	OutcomeRateLimited
+
+	// OutcomeDependencyFailure is an attempt that the dependency answered
+	// with a failure of its own.
+	OutcomeDependencyFailure
+
+	// OutcomeTransportFailure is an attempt that got no answer from the
+	// dependency.
+	OutcomeTransportFailure
+)
+
 // Result is a body-free transport result captured after an attempt.
 type Result struct {
 	Err error
 
 	// Timeout is the adaptive timeout that ended the attempt, or zero when
-	// Curo did not end it. A non-zero Timeout overrides Err and StatusCode.
-	Timeout     time.Duration
-	StatusCode  int
+	// Curo did not end it. A non-zero Timeout overrides every other field.
+	Timeout    time.Duration
+	StatusCode int
+
+	// Outcome classifies an Engine call's attempt. A non-zero Outcome
+	// overrides StatusCode and HasResponse, though not a caller cancellation
+	// that Err reports.
+	Outcome     Outcome
 	HasResponse bool
 }
 
 // Token carries request-local observation state between Begin and Finish.
 type Token struct {
-	target   *target
-	context  context.Context
-	cancel   <-chan struct{}
-	started  time.Time
-	probe    uint64
-	overflow bool
-	admitted bool
+	target  *target
+	context context.Context
+	cancel  <-chan struct{}
+	started time.Time
+
+	// returned and returnedErr are when the attempt returned and the caller's
+	// error at that moment, once Return stamped them.
+	returned    time.Time
+	returnedErr error
+	probe       uint64
+	stamped     bool
+	overflow    bool
+	admitted    bool
 }
 
 // Completion summarizes how Finish handled one initial attempt.
@@ -141,17 +192,42 @@ func (observer *Observer) Begin(request Request) Token {
 	}
 
 	started := observer.now()
-	tick := observer.tick(started)
 	if request.Context == nil {
 		request.Context = context.Background()
 	}
 
 	key, valid := normalizeTarget(request)
+	return observer.begin(started, request.Context, request.Cancel, key, valid)
+}
+
+// BeginCall resolves bounded target state before an Engine call's attempt.
+func (observer *Observer) BeginCall(call Call) Token {
+	if observer == nil {
+		return Token{}
+	}
+
+	started := observer.now()
+	if call.Context == nil {
+		call.Context = context.Background()
+	}
+
+	key, valid := normalizeCall(call)
+	return observer.begin(started, call.Context, nil, key, valid)
+}
+
+func (observer *Observer) begin(
+	started time.Time,
+	ctx context.Context,
+	cancel <-chan struct{},
+	key targetKey,
+	valid bool,
+) Token {
+	tick := observer.tick(started)
 	if !valid {
 		return Token{
 			target:   observer.registry.overflow,
-			context:  request.Context,
-			cancel:   request.Cancel,
+			context:  ctx,
+			cancel:   cancel,
 			started:  started,
 			overflow: true,
 		}
@@ -160,11 +236,39 @@ func (observer *Observer) Begin(request Request) Token {
 	state, overflow := observer.registry.get(key, tick)
 	return Token{
 		target:   state,
-		context:  request.Context,
-		cancel:   request.Cancel,
+		context:  ctx,
+		cancel:   cancel,
 		started:  started,
 		overflow: overflow,
 	}
+}
+
+// Return records that token's attempt returned. Finish then measures the
+// attempt's latency, and decides whether its caller owns a failure, as of this
+// moment rather than its own, so that work done between the two, such as
+// classifying an Engine call's error, counts for neither.
+func (observer *Observer) Return(token Token) Token {
+	if observer == nil || token.target == nil {
+		return token
+	}
+
+	token.returned = observer.now()
+	token.returnedErr = token.callerErr()
+	token.stamped = true
+	return token
+}
+
+// Discard ends token's attempt without recording it, for an attempt whose
+// result Curo failed to record or that returned no result because it
+// panicked. A breaker probe that Admit started settles as inconclusive, so the
+// breaker reopens for the base cooldown instead of waiting for the probe's
+// lease to expire and counting it as failed.
+func (observer *Observer) Discard(token Token) {
+	if observer == nil || token.target == nil || token.probe == 0 {
+		return
+	}
+
+	token.target.discard(observer.tick(observer.now()), token.probe)
 }
 
 // Finish records one completed initial transport attempt.
@@ -182,15 +286,21 @@ func (observer *Observer) Finish(token Token, result Result) Completion {
 		return Completion{}
 	}
 
-	finished := observer.now()
+	finished, callerErr := token.returned, token.returnedErr
+	if !token.stamped {
+		finished, callerErr = observer.now(), token.callerErr()
+	}
 	tick := observer.tick(finished)
 	latency := max(finished.Sub(token.started), 0)
 
 	var value observation
-	if result.Timeout > 0 {
+	switch {
+	case result.Timeout > 0:
 		value = censored(result.Timeout, token.target.timeouts)
-	} else {
-		value = classify(result, token.callerErr(), latency)
+	case result.Outcome != OutcomeUnclassified:
+		value = classifyOutcome(result, callerErr, latency)
+	default:
+		value = classify(result, callerErr, latency)
 	}
 	recorded, trip := token.target.complete(
 		tick,

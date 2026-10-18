@@ -1,9 +1,10 @@
 # Operating Curo
 
 This guide explains how to run Curo in a service. It covers wiring Curo,
-setting up the base transport, bounding requests, choosing timeout bounds,
-rolling out `Enforce`, monitoring, handling Curo's errors, and what to expect
-when a dependency fails. The [behavior reference](../reference/behavior.md)
+setting up the base transport, running other calls through an `Engine`,
+bounding requests, choosing timeout bounds, rolling out `Enforce`,
+monitoring, handling Curo's errors, and what to expect when a dependency
+fails. The [behavior reference](../reference/behavior.md)
 describes each mechanism in detail, and the
 [engine design](../design/engine.md) explains the reasons behind it.
 
@@ -20,16 +21,17 @@ different numbers.
 
 1. [Wire one transport](#wire-one-transport)
 2. [Set up the base transport](#set-up-the-base-transport)
-3. [Bound every request](#bound-every-request)
-4. [Choose timeout bounds](#choose-timeout-bounds)
-5. [Roll out Enforce](#roll-out-enforce)
-6. [Monitor](#monitor)
-7. [Handle Curo errors](#handle-curo-errors)
-8. [What to expect during incidents](#what-to-expect-during-incidents)
-9. [Restarts and low traffic](#restarts-and-low-traffic)
-10. [Capacity](#capacity)
-11. [Troubleshooting](#troubleshooting)
-12. [Known limitations](#known-limitations)
+3. [Run other calls through an Engine](#run-other-calls-through-an-engine)
+4. [Bound every request](#bound-every-request)
+5. [Choose timeout bounds](#choose-timeout-bounds)
+6. [Roll out Enforce](#roll-out-enforce)
+7. [Monitor](#monitor)
+8. [Handle Curo errors](#handle-curo-errors)
+9. [What to expect during incidents](#what-to-expect-during-incidents)
+10. [Restarts and low traffic](#restarts-and-low-traffic)
+11. [Capacity](#capacity)
+12. [Troubleshooting](#troubleshooting)
+13. [Known limitations](#known-limitations)
 
 ## Wire one transport
 
@@ -129,6 +131,78 @@ these values close a dead connection within about 20 seconds of the last
 frame it received. On Go 1.23, `golang.org/x/net/http2.ConfigureTransports`
 returns the HTTP/2 transport, whose `ReadIdleTimeout` and `PingTimeout`
 fields do the same.
+
+## Run other calls through an Engine
+
+Calls that do not go through `net/http`, such as gRPC calls, database
+queries, and cache commands, use Curo through an `Engine`. Create one when the
+process starts, share it across goroutines, and close it during shutdown, as
+with a transport:
+
+```go
+engine, err := curo.NewEngine(curo.WithLogger(logger))
+if err != nil {
+    return err
+}
+defer engine.Close()
+```
+
+Run each call through `Engine.Do`, with a `Call` that names its dependency
+and classifies its errors:
+
+```go
+var name string
+err = engine.Do(ctx, curo.Call{
+    Classify: classifyQuery,
+    Scheme:   "postgres",
+    Host:     "users-db.internal",
+    Port:     5432,
+    ReadOnly: true,
+}, func(ctx context.Context) error {
+    return db.QueryRowContext(ctx, query, id).Scan(&name)
+})
+```
+
+`classifyQuery` tells Curo what each error means:
+
+```go
+func classifyQuery(err error) curo.Classification {
+    switch {
+    case errors.Is(err, sql.ErrNoRows):
+        // A normal answer: the row does not exist.
+        return curo.Classification{Outcome: curo.OutcomeSuccess}
+    case isConstraintViolation(err):
+        // The caller's mistake, which says nothing about the database.
+        return curo.Classification{Outcome: curo.OutcomeClientFailure}
+    default:
+        return curo.Classification{Outcome: curo.OutcomeTransportFailure}
+    }
+}
+```
+
+- Name each dependency the same way on every call, with a fixed scheme,
+  host, and port. An engine tracks at most 128 targets, as a transport does,
+  and calls without a port, other than `http` and `https` calls, share the
+  overflow aggregate, where Curo does not act.
+- Give every call a `Classify`. Without one, every error counts against the
+  dependency, including normal answers such as a missing row and the
+  caller's own mistakes, which can open the breaker of a healthy dependency.
+  Map normal answers to `OutcomeSuccess`, the caller's mistakes to
+  `OutcomeClientFailure`, overload and quota errors to `OutcomeRateLimited`,
+  errors that the dependency answered with to `OutcomeDependencyFailure`, and
+  errors without an answer, such as a refused connection, to
+  `OutcomeTransportFailure`.
+- Set `ReadOnly` only on calls that change nothing, because an adaptive
+  timeout may end them. Finish using the attempt's context inside the
+  attempt, for example by reading every row. In `Enforce`, once a target has
+  an adaptive timeout, Curo cancels that context as soon as the attempt
+  returns, so results read after `Do` returns fail.
+- Set `ReplaySafe` only on calls that are safe to run twice, and not when the
+  client already retries, such as a gRPC channel with a retry policy.
+  Retries at both layers multiply the attempts that a failing dependency
+  receives.
+- The mode applies to the whole engine, so give dependencies that roll out
+  separately engines of their own.
 
 ## Bound every request
 
@@ -346,6 +420,11 @@ complete check.
 - Curo never retries a 429 response or opens a breaker for one, so honor
   `Retry-After` in your own code.
 - Other errors come from the base transport.
+- `Engine.Do` returns `ErrBreakerOpen` and `ErrTimeout` as they are.
+  `ErrBreakerOpen` means the attempt did not run, and `ErrTimeout` means
+  Curo ended a read-only attempt that may have reached the dependency.
+  Translate them into the errors that your callers expect. Other errors come
+  from the attempt.
 
 ## What to expect during incidents
 
@@ -399,12 +478,13 @@ Low-volume dependencies get fewer actions:
 ## Capacity
 
 - Retained state is bounded regardless of traffic. On 64-bit platforms,
-  target state takes about 1.23 MiB per transport with all 128 targets in
-  use, and the change journal takes 45,072 bytes, plus bounded map overhead.
-  Requests in flight add transient allocations.
+  target state takes about 1.23 MiB per transport or engine with all 128
+  targets in use, and the change journal takes 49,168 bytes, plus bounded
+  map overhead. Requests and calls in flight add transient allocations.
 - Curo runs no background workers. Each timed attempt uses one timer, whose
   callback runs on its own goroutine only if the timeout fires.
-- Benchmarks and allocation gates in CI measure the per-request cost, as the
+- Benchmarks and allocation gates in CI measure the cost of each request and
+  call, as the
   [engine design](../design/engine.md#19-performance-and-resource-targets)
   describes.
 
@@ -425,6 +505,8 @@ Low-volume dependencies get fewer actions:
 | The timeout stays high long after one slow response | A slow sample keeps it raised for up to about 30 minutes, until the sample ages out. |
 | Requests to an HTTP/2 dependency keep timing out while other replicas reach it | The base transport keeps sending requests on a connection that stopped responding without closing. [Turn on HTTP/2 health checks](#set-up-the-base-transport). |
 | A dependency that other clients reach is diagnosed `DependencyDown`, or its breaker opens | The client may be misconfigured. Curo counts every transport error as a dependency failure, including a certificate the client cannot verify and a host name that does not resolve. The requests that failed before the breaker opened, and each probe, return the TLS or DNS error. |
+| An `Engine` diagnoses a healthy dependency `DependencyDown`, or opens its breaker | The calls have no `Classify`, or it counts normal answers or the caller's mistakes as failures. [Classify them](#run-other-calls-through-an-engine) as `OutcomeSuccess` or `OutcomeClientFailure`. |
+| Reading results after `Engine.Do` returns fails with a canceled context | The call is read-only and its target has an adaptive timeout, so Curo canceled the attempt's context when the attempt returned. Read every result inside the attempt. |
 
 ## Known limitations
 
@@ -441,6 +523,10 @@ Low-volume dependencies get fewer actions:
 - The mode applies to a whole transport.
 - Logged failures carry no request context, so they cannot be joined to a
   request's trace.
+- An `Engine` acts on what the application declares, so a wrong `Classify`,
+  `ReadOnly`, or `ReplaySafe` leads to wrong decisions.
+- An adaptive timeout ends an `Engine` attempt only when the attempt honors
+  its context, and `Do` waits for the attempt to return.
 
 The behavior reference lists the detailed limits of
 [dependency breakers](../reference/behavior.md#dependency-breakers) and

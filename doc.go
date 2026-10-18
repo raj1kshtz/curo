@@ -1,4 +1,5 @@
-// Package curo adds adaptive resilience to outbound HTTP calls.
+// Package curo adds adaptive resilience to outbound HTTP requests and other
+// calls to dependencies.
 //
 // A [Transport] is an [http.RoundTripper] that wraps a base transport, such
 // as [http.DefaultTransport]. It observes the requests sent through it, learns
@@ -21,11 +22,35 @@
 //	}
 //	client := &http.Client{Transport: transport, Timeout: time.Minute}
 //
+// # Other calls
+//
+// An [Engine] applies the same controls to calls that do not go through
+// net/http, such as gRPC calls and database queries. Each call to
+// [Engine.Do] names its target, says whether it is read-only and
+// replay-safe, classifies its errors, and passes the attempt to make:
+//
+//	err = engine.Do(ctx, curo.Call{
+//		Classify:   classify,
+//		Scheme:     "grpc",
+//		Host:       "inventory.internal",
+//		Port:       443,
+//		ReadOnly:   true,
+//		ReplaySafe: true,
+//	}, func(ctx context.Context) error {
+//		item, err = inventory.GetItem(ctx, request)
+//		return err
+//	})
+//
+// The Engine retries only a replay-safe call whose failure Classify marks
+// retryable, and its adaptive timeout bounds the whole attempt of a read-only
+// call.
+//
 // # Modes
 //
-// A new Transport starts in [Observe]: it sends every request unchanged and
-// reports what it would do. [Enforce] applies the controls, and [Off] passes
-// requests straight to the base transport. [Transport.SetMode] changes the
+// A new Transport or Engine starts in [Observe]: it sends every request and
+// runs every call unchanged, and reports what it would do. [Enforce] applies
+// the controls, and [Off] passes requests straight to the base transport and
+// runs calls directly. [Transport.SetMode] and [Engine.SetMode] change the
 // mode at runtime, so a rollback needs no deploy. Apart from the timeout
 // bounds, set with [WithTimeoutBounds], every threshold is fixed.
 //
@@ -37,9 +62,9 @@
 //
 // # Visibility
 //
-// [Transport.Stats] returns aggregate counters, and [Transport.Report]
-// returns each dependency's latest decision with its evidence and reasons.
-// Both encode to JSON.
+// [Transport.Stats] and [Engine.Stats] return aggregate counters, and
+// [Transport.Report] and [Engine.Report] return each dependency's latest
+// decision with its evidence and reasons. Both encode to JSON.
 //
 // # Protocols
 //
@@ -52,11 +77,12 @@
 // # Safety
 //
 // Curo runs inside the application it protects. A failure inside Curo never
-// fails a request, and repeated failures make the Transport pass requests
-// straight through. [Transport.Stats] counts these failures, and [WithLogger]
-// logs where each one happened. Curo never retries a request that is not
-// replay-safe, never extends a caller's deadline, and keeps its state bounded
-// however many hosts the application calls.
+// fails a request or call, and repeated failures make a Transport pass
+// requests straight through and an Engine run attempts directly. Stats counts
+// these failures, and [WithLogger] logs where each one happened. Curo never
+// retries a request or call that is not replay-safe, never extends a
+// caller's deadline, and keeps its state bounded however many hosts the
+// application calls.
 //
 // The [operations guide] explains how to run Curo in a service, and the
 // [behavior reference] describes each mechanism in detail.

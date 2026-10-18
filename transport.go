@@ -6,12 +6,10 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
-	"sync/atomic"
 	"time"
 
 	"github.com/raj1kshtz/curo/internal/breaker"
 	"github.com/raj1kshtz/curo/internal/guard"
-	"github.com/raj1kshtz/curo/internal/observe"
 	"github.com/raj1kshtz/curo/internal/retry"
 	"github.com/raj1kshtz/curo/internal/timeout"
 )
@@ -33,239 +31,8 @@ import (
 //
 // A Transport must not be copied after first use.
 type Transport struct {
-	base     http.RoundTripper
-	guard    *guard.Guard
-	observer *observe.Observer
-	stages   requestStages
-	reports  func() observe.Report
-	wait     func(context.Context, <-chan struct{}, time.Duration) bool
-	after    timeout.AfterFunc
-
-	retries   retryCounters
-	breakers  breakerCounters
-	timeouts  timeoutCounters
-	authority atomic.Uint64
-	closed    atomic.Bool
-}
-
-// The authority word holds the operating mode in its low 32 bits and a
-// generation in its high 32 bits. Every mode change advances the generation,
-// so a pending retry detects any change made after its request started, even
-// one that later restored Enforce.
-const (
-	authorityGenerationShift = 32
-	authorityModeMask        = 1<<authorityGenerationShift - 1
-)
-
-type requestStages interface {
-	preflight(requestSnapshot, uint64) (requestState, error)
-	postflight(requestState, attemptResult) (retryGrant, error)
-	confirmRetry(requestState) bool
-}
-
-type requestState struct {
-	requestContext context.Context
-	cancel         <-chan struct{}
-	observation    observe.Token
-	authority      uint64
-
-	// timeout is the adaptive timeout for the request's attempts, or zero.
-	// Enforce applies it. Observe compares the initial attempt's latency
-	// with it.
-	timeout    time.Duration
-	admission  breaker.Admission
-	replaySafe bool
-}
-
-type requestSnapshot struct {
-	requestContext context.Context
-	cancel         <-chan struct{}
-	method         string
-	scheme         string
-	hostname       string
-	port           string
-	replaySafe     bool
-}
-
-type attemptResult struct {
-	err        error
-	header     http.Header
-	statusCode int
-
-	// timeout is the adaptive timeout that ended the attempt, or zero.
-	timeout     time.Duration
-	hasResponse bool
-}
-
-// retryGrant holds the budget reservation for one retry attempt that has not
-// started yet, the backoff before it, and the first attempt's latency.
-type retryGrant struct {
-	lease        retry.Lease
-	delay        time.Duration
-	firstAttempt time.Duration
-}
-
-type retryCounters struct {
-	attempts      atomic.Uint64
-	successes     atomic.Uint64
-	budgetDenials atomic.Uint64
-}
-
-type breakerCounters struct {
-	opens      atomic.Uint64
-	probes     atomic.Uint64
-	rejections atomic.Uint64
-}
-
-type timeoutCounters struct {
-	expired atomic.Uint64
-	shadow  atomic.Uint64
-}
-
-type adaptiveStages struct {
-	observer   *observe.Observer
-	retries    *retryCounters
-	breakers   *breakerCounters
-	timeouts   *timeoutCounters
-	authorized func(uint64) bool
-	jitter     func() time.Duration
-}
-
-func newAdaptiveStages(
-	observer *observe.Observer,
-	retries *retryCounters,
-	breakers *breakerCounters,
-	timeouts *timeoutCounters,
-	authorized func(uint64) bool,
-) adaptiveStages {
-	return adaptiveStages{
-		observer:   observer,
-		retries:    retries,
-		breakers:   breakers,
-		timeouts:   timeouts,
-		authorized: authorized,
-		jitter:     retry.Jitter,
-	}
-}
-
-// preflight resolves the request's target. In Enforce mode it also asks the
-// target's dependency breaker to admit the request. A request that passes
-// gets the target's adaptive timeout, unless the caller already canceled it
-// or its deadline is no later than the timeout would be.
-func (stages adaptiveStages) preflight(
-	snapshot requestSnapshot,
-	authority uint64,
-) (requestState, error) {
-	token := stages.observer.Begin(observe.Request{
-		Context:  snapshot.requestContext,
-		Cancel:   snapshot.cancel,
-		Method:   snapshot.method,
-		Scheme:   snapshot.scheme,
-		Hostname: snapshot.hostname,
-		Port:     snapshot.port,
-	})
-	admission := breaker.Pass
-	if authorityMode(authority) == Enforce {
-		token, admission = stages.observer.Admit(token)
-	}
-
-	state := requestState{
-		requestContext: snapshot.requestContext,
-		cancel:         snapshot.cancel,
-		observation:    token,
-		authority:      authority,
-		admission:      admission,
-		replaySafe:     snapshot.replaySafe,
-	}
-	if admission == breaker.Pass {
-		state.timeout = timeoutWithin(
-			snapshot.requestContext,
-			snapshot.cancel,
-			stages.observer.Timeout(token),
-		)
-	}
-
-	return state, nil
-}
-
-// timeoutWithin returns limit when a request with ctx and cancel can still
-// run for longer than limit, and zero otherwise.
-func timeoutWithin(
-	ctx context.Context,
-	cancel <-chan struct{},
-	limit time.Duration,
-) time.Duration {
-	if limit <= 0 ||
-		retry.Canceled(cancel) ||
-		!retry.DeadlineAllows(ctx, 0, limit) {
-		return 0
-	}
-
-	return limit
-}
-
-// postflight records the initial attempt and settles a breaker probe. In
-// Enforce mode, a dependency failure opens the target's dependency breaker
-// when the target's plan selects BreakerOpen and the request's authority is
-// still current. When every retry condition holds, its last step reserves
-// retry budget for one retry. An attempt that the adaptive timeout ended is
-// never retried.
-func (stages adaptiveStages) postflight(
-	state requestState,
-	result attemptResult,
-) (retryGrant, error) {
-	completion := stages.observer.Finish(state.observation, observe.Result{
-		Err:         result.err,
-		Timeout:     result.timeout,
-		StatusCode:  result.statusCode,
-		HasResponse: result.hasResponse,
-	})
-	if authorityMode(state.authority) == Observe &&
-		state.timeout > 0 &&
-		completion.Recorded &&
-		completion.Latency > state.timeout {
-		stages.timeouts.shadow.Add(1)
-	}
-	if completion.Trip &&
-		stages.authorized(state.authority) &&
-		stages.observer.Trip(state.observation) {
-		stages.breakers.opens.Add(1)
-	}
-	if authorityMode(state.authority) != Enforce ||
-		!state.replaySafe ||
-		!completion.Recorded ||
-		result.timeout > 0 ||
-		!retry.Retryable(
-			completion.DependencyFailure,
-			result.err,
-			result.statusCode,
-			result.header,
-		) {
-		return retryGrant{}, nil
-	}
-
-	delay := stages.jitter()
-	if retry.Canceled(state.cancel) ||
-		!retry.DeadlineAllows(state.requestContext, delay, completion.Latency) {
-		return retryGrant{}, nil
-	}
-
-	lease, reservation := stages.observer.ReserveRetry(state.observation)
-	if reservation == observe.RetryBudgetExhausted {
-		stages.retries.budgetDenials.Add(1)
-	}
-
-	return retryGrant{
-		lease:        lease,
-		delay:        delay,
-		firstAttempt: completion.Latency,
-	}, nil
-}
-
-// confirmRetry reports whether the target's published plan still permits the
-// retry after the backoff.
-func (stages adaptiveStages) confirmRetry(state requestState) bool {
-	return stages.observer.RetryPermitted(state.observation)
+	base http.RoundTripper
+	core
 }
 
 // New constructs a Transport around base.
@@ -282,23 +49,8 @@ func New(base http.RoundTripper, options ...Option) (*Transport, error) {
 		return nil, err
 	}
 
-	observer := observe.New(cfg.timeouts)
-	transport := &Transport{
-		base:     base,
-		guard:    guard.New(failureReporter(cfg.logger)),
-		observer: observer,
-		reports:  observer.Report,
-		wait:     retry.Wait,
-		after:    timeout.SystemAfterFunc,
-	}
-	transport.stages = newAdaptiveStages(
-		observer,
-		&transport.retries,
-		&transport.breakers,
-		&transport.timeouts,
-		transport.authorized,
-	)
-	transport.authority.Store(uint64(cfg.mode))
+	transport := &Transport{base: base}
+	transport.init(cfg)
 
 	return transport, nil
 }
@@ -378,7 +130,19 @@ func (t *Transport) RoundTrip(req *http.Request) (*http.Response, error) {
 		}
 	}
 
+	returned := false
+	if runPostflight && state.admission == breaker.Probe {
+		// A probe whose base transport panics returns no result, so settle
+		// it as inconclusive. The panic keeps propagating: discard contains
+		// only a failure of its own.
+		defer func() {
+			if !returned {
+				t.discard(state)
+			}
+		}()
+	}
 	response, cut, err := t.send(req, state.cancel, limit, authority)
+	returned = true
 	if !runPostflight {
 		return response, err
 	}
@@ -394,6 +158,9 @@ func (t *Transport) RoundTrip(req *http.Request) (*http.Response, error) {
 		grant, stageErr = stages.postflight(state, result)
 		return stageErr
 	})
+	if outcome != guard.Completed {
+		t.discard(state)
+	}
 	if !grant.lease.Held() {
 		return response, err
 	}
@@ -427,10 +194,17 @@ func (t *Transport) retry(
 	response *http.Response,
 	err error,
 ) (*http.Response, error) {
+	//nolint:contextcheck // prepareRetry takes its context from the request.
 	next, body := t.prepareRetry(req, state.cancel, authority, grant.delay)
 	permitted, limit := false, time.Duration(0)
 	if next != nil {
-		permitted, limit = t.commitRetry(req, stages, state, authority, grant.firstAttempt)
+		permitted, limit = t.commitRetry(
+			req.Context(),
+			stages,
+			state,
+			authority,
+			grant.firstAttempt,
+		)
 	}
 	if !permitted {
 		grant.lease.Cancel()
@@ -504,44 +278,6 @@ func replayBody(req *http.Request) io.ReadCloser {
 	return body
 }
 
-// commitRetry is the final check before a retry starts. Authority, the caller's
-// cancellation and deadline, and the target's published Retry plan must all
-// still hold after the backoff. It also returns the request's adaptive
-// timeout for the retry, or zero when the caller's deadline now comes first.
-func (t *Transport) commitRetry(
-	req *http.Request,
-	stages requestStages,
-	state requestState,
-	authority uint64,
-	firstAttempt time.Duration,
-) (bool, time.Duration) {
-	var (
-		permitted bool
-		limit     time.Duration
-	)
-	_ = t.guard.Run(guard.StageRetry, func() error {
-		permitted = t.authorized(authority) &&
-			!retry.Canceled(state.cancel) &&
-			retry.DeadlineAllows(req.Context(), 0, firstAttempt) &&
-			stages.confirmRetry(state)
-		if permitted {
-			limit = timeoutWithin(req.Context(), state.cancel, state.timeout)
-		}
-		return nil
-	})
-
-	return permitted, limit
-}
-
-// authorized reports whether the authority a request started with is still
-// current. Any mode change or Close after the request started revokes it.
-// Self-disable revokes it through the guard, which skips later stages. Opening
-// a dependency breaker, starting a retry, and ending an attempt with an
-// adaptive timeout all take effect only after this check passes.
-func (t *Transport) authorized(authority uint64) bool {
-	return t.authority.Load() == authority && !t.closed.Load()
-}
-
 // send makes one base transport call. A positive limit bounds the call with
 // an adaptive timeout, and cancel is the request's deprecated Cancel channel.
 // send reports whether the timeout ended the call. It then returns ErrTimeout
@@ -567,12 +303,9 @@ func (t *Transport) send(
 	returned := false
 	defer func() {
 		// A panicking base transport returns no result to settle. Its panic
-		// keeps propagating: Contain recovers only a failure of Abandon.
+		// keeps propagating: abandon contains only a failure of Abandon.
 		if !returned {
-			_ = t.guard.Contain(guard.StageTimeout, func() error {
-				attempt.Abandon()
-				return nil
-			})
+			t.abandon(attempt)
 		}
 	}()
 	//nolint:contextcheck // RoundTrip takes its context from the request.
@@ -596,41 +329,13 @@ func (t *Transport) arm(
 	limit time.Duration,
 	authority uint64,
 ) (*timeout.Attempt, *http.Request) {
-	var (
-		attempt *timeout.Attempt
-		timed   *http.Request
-	)
-	if t.guard.Run(guard.StageTimeout, func() error {
-		armed := timeout.New(req.Context(), cancel, limit)
-		attempt = armed
-		timed = req.WithContext(armed.Context())
-		armed.Arm(t.after, func() {
-			t.expire(armed, authority)
-		})
-		return nil
-	}) == guard.Completed {
-		return attempt, timed
+	attempt := t.startTimeout(req.Context(), cancel, limit, authority)
+	if attempt == nil {
+		return nil, nil
 	}
 
-	if attempt != nil {
-		_ = t.guard.Contain(guard.StageTimeout, func() error {
-			attempt.Abandon()
-			return nil
-		})
-	}
-	return nil, nil
-}
-
-// expire runs on the timer's goroutine when an attempt's adaptive timeout
-// elapses. Like a retry that has not started, the timeout is withdrawn when
-// the request's authority was revoked or Curo disabled itself.
-func (t *Transport) expire(attempt *timeout.Attempt, authority uint64) {
-	_ = t.guard.Run(guard.StageTimeout, func() error {
-		if t.authorized(authority) {
-			attempt.Expire()
-		}
-		return nil
-	})
+	//nolint:contextcheck // The attempt's context derives from the request's.
+	return attempt, req.WithContext(attempt.Context())
 }
 
 // settle ends a timed attempt after the base transport returned, and reports
@@ -643,14 +348,7 @@ func (t *Transport) settle(
 	response *http.Response,
 	err error,
 ) bool {
-	// Settle decides the attempt before it stops the timer, the only step
-	// that can fail, so an attempt whose Settle failed still returned.
-	returned := true
-	_ = t.guard.Contain(guard.StageTimeout, func() error {
-		returned = attempt.Settle()
-		return nil
-	})
-	if !returned {
+	if !t.returned(attempt) {
 		if response != nil && response.Body != nil {
 			t.closeBody(response.Body)
 		}
@@ -702,10 +400,6 @@ func closeUnsentBody(body io.Closer) {
 		_ = body.Close()
 		return nil
 	})
-}
-
-func authorityMode(authority uint64) Mode {
-	return Mode(authority & authorityModeMask)
 }
 
 func snapshotRequest(request *http.Request) requestSnapshot {
@@ -781,25 +475,8 @@ func (t *Transport) SetMode(mode Mode) error {
 	if t == nil || t.base == nil {
 		return ErrNilBaseTransport
 	}
-	if t.closed.Load() {
-		return ErrClosed
-	}
-	if !mode.valid() {
-		return invalidModeError(mode)
-	}
 
-	for {
-		current := t.authority.Load()
-		if authorityMode(current) == mode {
-			return nil
-		}
-
-		generation := current>>authorityGenerationShift + 1
-		next := generation<<authorityGenerationShift | uint64(mode)
-		if t.authority.CompareAndSwap(current, next) {
-			return nil
-		}
-	}
+	return t.setMode(mode)
 }
 
 // Close releases resources owned by the Transport.

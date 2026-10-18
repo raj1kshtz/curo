@@ -85,7 +85,7 @@ func TestExpiryCancelsWithItsOwnCause(t *testing.T) {
 	if !errors.As(cause, &timeout) || !timeout.Timeout() {
 		t.Fatalf("cause = %v, want a timeout", cause)
 	}
-	if want := "curo: adaptive timeout of 2s awaiting response headers"; cause.Error() != want {
+	if want := "curo: adaptive timeout of 2s expired"; cause.Error() != want {
 		t.Errorf("cause = %q, want %q", cause.Error(), want)
 	}
 	if attempt.Settle() {

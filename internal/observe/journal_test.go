@@ -110,7 +110,7 @@ func TestDiagnosisRecordsOnlyCandidateChanges(t *testing.T) {
 	state.changes = changes
 
 	failure := observation{
-		outcome: outcomeHTTPFailure,
+		outcome: outcomeFailedResponse,
 		signal:  diagnosisDependencyFailure,
 	}
 	for index := range 20 {
@@ -157,7 +157,7 @@ func TestDiagnosisRecordsOnlyCandidateChanges(t *testing.T) {
 	}
 
 	rateLimited := observation{
-		outcome: outcomeHTTPFailure,
+		outcome: outcomeFailedResponse,
 		signal:  diagnosisRateLimited,
 	}
 	for index := range 6 {
@@ -218,7 +218,7 @@ func TestRetiredTargetStopsEvaluatingAndRecordingChanges(t *testing.T) {
 	}
 
 	failure := observation{
-		outcome: outcomeHTTPFailure,
+		outcome: outcomeFailedResponse,
 		signal:  diagnosisDependencyFailure,
 	}
 	for index := range 25 {

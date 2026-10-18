@@ -41,7 +41,8 @@ outbound request path. Security-sensitive failures therefore include:
 - **Credential or payload leakage.** Bodies, authorization values, cookies, or
   tokens appearing in logs, metrics, errors, or audit events.
 - **Request mutation or duplication.** A replayed request differs from the
-  caller's request, or an unsafe request is attempted more than once.
+  caller's request, or an unsafe request, or an `Engine` call that is not
+  replay-safe, is attempted more than once.
 - **Retry amplification.** Retry behavior exceeds its aggregate safety bounds.
 
 The governing safety requirements are recorded in

@@ -357,6 +357,37 @@ func TestCanceledProbeReopensWithoutEscalating(t *testing.T) {
 	admit(t, observer, request, breaker.Probe)
 }
 
+func TestDiscardedProbeReopensWithoutEscalating(t *testing.T) {
+	t.Parallel()
+
+	clock := newObservationClock(time.Unix(26_500, 0))
+	observer := NewWithClock(clock.Now, noTimeouts)
+	request, state := recordDownTarget(t, observer, clock, "down.example")
+	openBreaker(t, observer, clock, request)
+
+	(*Observer)(nil).Discard(Token{})
+	observer.Discard(Token{})
+	observer.Discard(observer.Begin(request))
+	if !state.engaged.Load() || breakerState(state) != breaker.Open {
+		t.Fatalf("state after discarding no probe = %v, want Open", breakerState(state))
+	}
+
+	clock.Advance(breaker.BaseCooldown)
+	probe := admit(t, observer, request, breaker.Probe)
+	observer.Discard(probe)
+	if !state.engaged.Load() || breakerState(state) != breaker.Open {
+		t.Fatalf("state after a discarded probe = %v, want Open", breakerState(state))
+	}
+
+	// The discarded probe did not escalate, so the breaker reopened for the
+	// base cooldown. Discarding the probe again changes nothing.
+	clock.Advance(breaker.BaseCooldown - time.Nanosecond)
+	observer.Discard(probe)
+	admit(t, observer, request, breaker.Reject)
+	clock.Advance(time.Nanosecond)
+	admit(t, observer, request, breaker.Probe)
+}
+
 func TestCanceledRequestsAreNeverProbes(t *testing.T) {
 	t.Parallel()
 

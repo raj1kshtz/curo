@@ -53,7 +53,7 @@ func TestClassifyUsesExclusiveOutcomes(t *testing.T) {
 				StatusCode:  httpStatusServiceUnavailable,
 				HasResponse: true,
 			},
-			wantOutcome:   outcomeHTTPFailure,
+			wantOutcome:   outcomeFailedResponse,
 			wantStatus:    true,
 			wantClass:     4,
 			wantLatency:   true,
@@ -142,7 +142,7 @@ func TestClassifyUsesExclusiveOutcomes(t *testing.T) {
 				StatusCode:  429,
 				HasResponse: true,
 			},
-			wantOutcome:   outcomeHTTPFailure,
+			wantOutcome:   outcomeFailedResponse,
 			wantStatus:    true,
 			wantClass:     3,
 			wantLatency:   true,
@@ -154,7 +154,7 @@ func TestClassifyUsesExclusiveOutcomes(t *testing.T) {
 				StatusCode:  404,
 				HasResponse: true,
 			},
-			wantOutcome:   outcomeHTTPFailure,
+			wantOutcome:   outcomeFailedResponse,
 			wantStatus:    true,
 			wantClass:     3,
 			wantLatency:   true,
@@ -206,6 +206,104 @@ func TestClassifyUsesExclusiveOutcomes(t *testing.T) {
 			}
 			if got.signal != test.wantSignal {
 				t.Errorf("signal = %v, want %v", got.signal, test.wantSignal)
+			}
+		})
+	}
+}
+
+func TestClassifyOutcomeUsesTheCallsClassification(t *testing.T) {
+	t.Parallel()
+
+	failure := errors.New("call failure")
+	tests := map[string]struct {
+		contextErr  error
+		result      Result
+		wantOutcome outcome
+		wantSource  timeoutSource
+		wantSignal  diagnosisSignal
+		wantTimeout bool
+		wantLatency bool
+	}{
+		"success": {
+			result:      Result{Outcome: OutcomeSuccess},
+			wantOutcome: outcomeSuccess,
+			wantSignal:  diagnosisNeutral,
+			wantLatency: true,
+		},
+		"error classified as success": {
+			result:      Result{Err: failure, Outcome: OutcomeSuccess},
+			wantOutcome: outcomeSuccess,
+			wantSignal:  diagnosisNeutral,
+			wantLatency: true,
+		},
+		"client failure": {
+			result:      Result{Err: failure, Outcome: OutcomeClientFailure},
+			wantOutcome: outcomeFailedResponse,
+			wantSignal:  diagnosisClientFailure,
+			wantLatency: true,
+		},
+		"rate limited": {
+			result:      Result{Err: failure, Outcome: OutcomeRateLimited},
+			wantOutcome: outcomeFailedResponse,
+			wantSignal:  diagnosisRateLimited,
+			wantLatency: true,
+		},
+		"dependency failure": {
+			result:      Result{Err: failure, Outcome: OutcomeDependencyFailure},
+			wantOutcome: outcomeFailedResponse,
+			wantSignal:  diagnosisDependencyFailure,
+			wantLatency: true,
+		},
+		"transport failure": {
+			result:      Result{Err: failure, Outcome: OutcomeTransportFailure},
+			wantOutcome: outcomeTransportFailure,
+			wantSignal:  diagnosisDependencyFailure,
+		},
+		"unknown outcome": {
+			result:      Result{Err: failure, Outcome: OutcomeTransportFailure + 1},
+			wantOutcome: outcomeTransportFailure,
+			wantSignal:  diagnosisDependencyFailure,
+		},
+		"caller canceled": {
+			result:      Result{Err: failure, Outcome: OutcomeDependencyFailure},
+			contextErr:  context.Canceled,
+			wantOutcome: outcomeCanceled,
+			wantSignal:  diagnosisCallerOwned,
+		},
+		"caller deadline": {
+			result:      Result{Err: failure, Outcome: OutcomeTransportFailure},
+			contextErr:  context.DeadlineExceeded,
+			wantOutcome: outcomeTimedOut,
+			wantSource:  timeoutCaller,
+			wantSignal:  diagnosisCallerOwned,
+			wantTimeout: true,
+		},
+		"success after the caller canceled": {
+			result:      Result{Outcome: OutcomeSuccess},
+			contextErr:  context.Canceled,
+			wantOutcome: outcomeSuccess,
+			wantSignal:  diagnosisNeutral,
+			wantLatency: true,
+		},
+	}
+
+	for name, test := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			got := classifyOutcome(test.result, test.contextErr, 20*time.Millisecond)
+			want := observation{
+				outcome:       test.wantOutcome,
+				timeoutSource: test.wantSource,
+				signal:        test.wantSignal,
+				hasTimeout:    test.wantTimeout,
+				hasLatency:    test.wantLatency,
+			}
+			if test.wantLatency {
+				want.latencyBucket = 3
+			}
+			if got != want {
+				t.Errorf("classifyOutcome() = %#v, want %#v", got, want)
 			}
 		})
 	}
@@ -405,9 +503,10 @@ func TestRecordTickExpandsBothBounds(t *testing.T) {
 func TestEvidenceStateCannotRetainSensitiveValues(t *testing.T) {
 	t.Parallel()
 
-	// The normalized hostname is the only retained text. It is bounded to 253
-	// bytes and cloned at admission.
-	allowedStrings := map[string]int{"targetKey.host": 0}
+	// The normalized hostname and scheme are the only retained text. They are
+	// bounded to 253 and 32 bytes and cloned at admission, unless the scheme is
+	// one of the constants.
+	allowedStrings := map[string]int{"targetKey.host": 0, "targetKey.scheme": 0}
 	// atomic.Pointer holds its value in an unsafe.Pointer. The only one is the
 	// target's timeout mirror, so its pointee is inspected instead.
 	timeoutMirror := reflect.TypeOf(atomic.Pointer[publishedTimeout]{}).Name() + ".v"
@@ -478,8 +577,8 @@ func TestEvidenceStateCannotRetainSensitiveValues(t *testing.T) {
 	}
 	if unsafe.Sizeof(uintptr(0)) == 8 {
 		const (
-			documentedTargetBytes  = 10_000
-			documentedJournalBytes = 45_072
+			documentedTargetBytes  = 10_016
+			documentedJournalBytes = 49_168
 		)
 		if got := unsafe.Sizeof(target{}); got != documentedTargetBytes {
 			t.Errorf(

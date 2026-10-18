@@ -1,12 +1,13 @@
 # Curo Engine High-Level Design
 
-- **Status:** Design target for `v0.1.0`
-- **Updated:** 2026-10-03
-- **Scope:** Embedded Go engine for outbound `net/http` calls
+- **Status:** Design target for `v0.2.0`
+- **Updated:** 2026-10-18
+- **Scope:** Embedded Go engine for outbound `net/http` requests and for
+  other calls that applications run through `Engine`
 - **Audience:** Maintainers, contributors, reviewers, and adopters
 
 > [!NOTE]
-> This document describes the intended `v0.1.0` architecture. Sections state
+> This document describes the intended `v0.2.0` architecture. Sections state
 > which parts are implemented today; everything else remains a design target.
 
 ## 1. Executive Summary
@@ -14,7 +15,9 @@
 Curo is designed as an embedded Go resilience engine that wraps an
 application's outbound `http.RoundTripper`. It observes bounded transport
 evidence, produces an explainable diagnosis, and may apply a bounded mitigation
-when the instance is explicitly placed in `Enforce` mode.
+when the instance is explicitly placed in `Enforce` mode. An `Engine` applies
+the same engine to calls that do not go through `net/http`, such as gRPC calls
+and database queries, which the application runs through a function.
 
 The engine is local to one host process. It does not depend on a sidecar,
 control plane, external data store, or third-party runtime module. Each Curo
@@ -49,16 +52,24 @@ This design is governed by the following accepted ADRs:
   adaptive dependency breakers.
 - [ADR-0009](../adr/0009-adaptive-timeouts.md):
   adaptive timeouts for reads.
+- [ADR-0010](../adr/0010-versioning-and-compatibility.md):
+  versioning and the compatibility promise.
+- [ADR-0011](../adr/0011-internal-failure-logging.md):
+  internal-failure logging through `log/slog`.
+- [ADR-0012](../adr/0012-engine-and-adapter-modules.md):
+  the protocol-neutral `Engine` and protocol adapter modules.
 
 If this document conflicts with an accepted ADR, the ADR controls and this
 document must be corrected.
 
 ## 3. Goals
 
-The `v0.1.0` engine must:
+The engine must:
 
-1. Integrate explicitly with outbound `net/http` clients.
-2. Preserve the wrapped transport's behavior when Curo is off or degraded.
+1. Integrate explicitly with outbound `net/http` clients, and with other
+   outbound calls through `Engine`.
+2. Preserve the behavior of the wrapped transport or call when Curo is off or
+   degraded.
 3. Keep every Curo-owned resource bounded.
 4. Produce deterministic and auditable diagnoses and actions.
 5. Prevent retries from creating unbounded traffic amplification.
@@ -70,20 +81,25 @@ The `v0.1.0` engine must:
 
 ## 4. Non-Goals
 
-The first engine does not provide:
+The engine does not provide:
 
 - A sidecar proxy, daemon, or centralized control plane.
 - SDKs for languages other than Go.
 - Fleet-wide state or cross-process retry coordination.
-- Ingress middleware or gRPC interception.
-- Outbound traffic that does not go through `net/http`, such as database
-  drivers, cache and message broker clients, or raw TCP.
+- Ingress middleware, or protocol interception in the root module. Adapters
+  that need a third-party API, such as a gRPC interceptor, live in separate
+  modules, as [ADR-0012](../adr/0012-engine-and-adapter-modules.md) records.
+- Automatic coverage of outbound traffic that does not go through
+  `net/http`. Database queries, cache and message broker commands, and other
+  calls are covered only when the application runs them through `Engine`.
+- Streams, such as gRPC streams, or long-lived connections, such as raw TCP
+  connections.
 - Request or response body inspection.
 - Response caching or business-level fallback values.
 - Machine-learning policy.
 - Persistent adaptive state across process restarts.
 - Arbitrary workflow execution.
-- Public replay and mitigation-control types beyond the transport,
+- Public replay and mitigation-control types beyond the transport, engine,
   statistics, and decision report API.
 
 ## 5. Architectural Invariants
@@ -101,13 +117,13 @@ The implementation must preserve these invariants:
 4. **Explicit authority.**
    Only `Enforce` may change request behavior.
 5. **Direct escape path.**
-   `Off` and self-disabled operation reach the base transport without entering
-   the adaptive pipeline.
+   `Off` and self-disabled operation reach the base transport, or run the
+   attempt, without entering the adaptive pipeline.
 6. **No lock across I/O.**
    All decision data needed for an attempt is copied into an immutable
-   snapshot before calling the base transport.
+   snapshot before calling the base transport or the attempt.
 7. **No request-scoped goroutine.**
-   A request does not start a Curo goroutine. When an adaptive timeout
+   A request or call does not start a Curo goroutine. When an adaptive timeout
    expires, the runtime runs Curo's short timer callback on its own
    goroutine, inside a recovery boundary.
 8. **Deterministic policy.**
@@ -127,11 +143,12 @@ The implementation must preserve these invariants:
 
 Curo runs inside the host Go process. The application owns the HTTP client,
 request, context, and base transport. Curo owns only its wrapper and internal
-state.
+state. For an `Engine` call, the application owns the client, the context, and
+the attempt function instead.
 
-The base transport remains the only component that performs network I/O.
-Curo does not resolve an alternative destination, rewrite the request URL, or
-introduce a service dependency.
+The base transport, or an `Engine` call's attempt, remains the only component
+that performs network I/O. Curo does not resolve an alternative destination,
+rewrite the request URL, or introduce a service dependency.
 
 Configuration enters through the public API. Sanitized operational evidence
 leaves through the observability boundary. Optional OpenTelemetry or
@@ -161,6 +178,7 @@ The public boundary owns:
 
 - Instance construction and validation.
 - Base transport wrapping.
+- Running other calls through `Engine.Do`.
 - Mode reads and updates.
 - Lifecycle close and explicit reset.
 - Read-only diagnostic and audit access.
@@ -181,10 +199,14 @@ timeouts add the `ErrTimeout` sentinel error, the `WithTimeoutBounds` option
 for their floor and ceiling, the `CandidateTimeout` candidate with the
 `Timeout` and `Latency` decision fields, and aggregate `Stats` counters.
 Internal-failure logging adds only the `WithLogger` option, which takes a
-standard `*slog.Logger`. Replay opt-in for unsafe methods, other mitigation
+standard `*slog.Logger`. The `Engine` adds `Engine`, `NewEngine`, `Call`,
+`Classification`, `Outcome` and its constants, and the
+`ErrUninitializedEngine` sentinel error. It shares the options, modes,
+`Stats`, `Report`, and errors of a `Transport`, so it adds no option, counter,
+or report type. Replay opt-in for unsafe methods, other mitigation
 configuration, and applied-action auditing remain deferred.
 
-### 7.2 Transport Adapter
+### 7.2 Transport and Engine Adapters
 
 The transport adapter implements the `http.RoundTripper` contract and divides
 execution into:
@@ -220,6 +242,27 @@ the attempt first, the adapter closes any late response and returns
 `ErrTimeout`. The timer callback is the only Curo code that runs while a base
 call is in progress. It runs inside a recovery boundary and only cancels the
 derived context.
+
+The engine adapter, `Engine.Do`, divides a call the same way. Guarded
+preflight receives a snapshot of the `Call`: its scheme, host, port, and
+whether it is read-only. The attempt function takes the place of the base
+call and runs outside the recovery boundary, so a panic in it propagates
+unchanged. Guarded postflight calls the call's `Classify` for a non-nil error,
+so a panic in `Classify` is contained and counted, and `Do` returns the
+attempt's error. `Transport` and `Engine` embed one shared core, so admission,
+evidence, diagnosis, budgets, breakers, timeouts, and the guard run the same
+code for both.
+
+An `Engine` call that the breaker rejects returns `ErrBreakerOpen` without
+running the attempt. An adaptive timeout derives a context for the attempt
+in the same guarded step, and `Do` waits for the attempt to return. Curo
+cancels the derived context when the timer fires or the attempt returns,
+because a call has no body whose close could release it later. If the timer
+settled the attempt first, `Do` returns `ErrTimeout` and does not classify the
+attempt's error. A retry runs the attempt function again after the same
+backoff and commit check as a request retry. Its error is returned as
+captured, and `Classify` runs once more only to count a retry that served the
+call.
 
 ### 7.3 Guard
 
@@ -420,6 +463,11 @@ The base transport is host-owned. Curo:
 ![Curo operating modes](diagrams/operating-modes.svg)
 
 [Diagram source](diagrams/operating-modes.mmd)
+
+An `Engine` call follows the same paths. Its attempt takes the place of the
+base transport, its error and the classification that `Classify` reports take
+the place of the response, and a retry runs the attempt again instead of
+sending a clone of the request.
 
 ### 8.1 Off
 
@@ -724,7 +772,7 @@ create unbounded cardinality.
 
 The implemented target identity contains only bounded dimensions:
 
-- HTTP or HTTPS scheme.
+- Scheme: HTTP or HTTPS for a request, or the scheme of an `Engine` call.
 - Canonical IP literal with any zone identifier preserved exactly, or a
   lowercase DNS hostname with one trailing root dot removed.
 - Effective port.
@@ -747,6 +795,13 @@ The initial method classes are read, write, connect, and other. An empty method
 uses the read class because `net/http` treats it as `GET`. Unknown schemes,
 invalid ports, empty hostnames, and hostnames longer than 253 bytes use the
 overflow aggregate.
+
+An `Engine` call uses the read class when it is read-only and the write class
+otherwise. Its scheme may be any URI scheme of at most 32 bytes, and is
+compared without regard to case. Only `http` and `https` have default ports,
+so any other call without a port uses the overflow aggregate. The schemes
+`http`, `https`, and `grpc` are shared constants, and any other scheme is
+copied into detached storage with the hostname when its target is admitted.
 
 Registry admission follows these rules:
 
@@ -813,6 +868,19 @@ exist when a Kubernetes headless Service has no ready endpoints. Treating
 these errors as client failures would withhold retries and breakers in those
 outages, so a misconfigured client instead sees its dependency diagnosed as
 down, and the operations guide explains how to recognize that case.
+
+An `Engine` call's attempt maps onto the same outcomes and signals. A nil
+error, or an error that `Classify` reports as `OutcomeSuccess`, is a success.
+`OutcomeClientFailure`, `OutcomeRateLimited`, and `OutcomeDependencyFailure`
+count as answered failures with the client-failure, rate-limit, and
+dependency-failure signals, as a non-429 4xx, a 429, and a 5xx response do.
+Each of these contributes a latency sample. `OutcomeTransportFailure`,
+`OutcomeUnspecified`, any value that is not an `Outcome` constant, and any
+error of a call without a `Classify` count as a transport failure without a
+latency sample. A failed attempt whose caller canceled it, or whose caller's
+deadline expired, is caller-owned whatever `Classify` reports, and an attempt
+that the adaptive timeout ended is recorded as described above, without
+calling `Classify`.
 
 An error takes precedence over a response status, so a response returned
 alongside a transport error cannot be mistaken for rate limiting. Caller-owned
@@ -1021,6 +1089,11 @@ The default replay policy is conservative. Safe read methods are eligible
 first. Unsafe methods require explicit application intent; the presence of an
 idempotency header alone is not assumed to prove safe replay.
 
+An `Engine` call is eligible only when the application marks it `ReplaySafe`
+and `Classify` marks its failure `Retryable`, which applies only to dependency
+and transport failures. Its retry runs the attempt function again, so it has
+no body to reproduce.
+
 Backoff is cancellable, uses bounded jitter, and does not hold a lock.
 
 When a response is discarded for a retry, its body is closed.
@@ -1163,7 +1236,8 @@ The implemented transitions are:
   dependency reopens the breaker with a doubled cooldown. A lease that expires
   without a result counts as a failed probe as of its deadline. A probe that
   the caller canceled, or whose caller deadline expired, reopens the breaker
-  for 5 seconds without escalation.
+  for 5 seconds without escalation. So does a probe that records no result,
+  because Curo failed to record it or because its attempt panicked.
 
 A result that arrives after its lease expired can still close the breaker if
 the dependency answered, because it shows recovery. Its other outcomes are
@@ -1214,7 +1288,10 @@ never extends a caller's deadline.
 contract. Only regular read targets select a timeout. The bounded interval is
 the one Curo measures as latency: from handing the attempt to the base
 transport until the base transport returns. Reading the response body is not
-bounded.
+bounded. For an `Engine` call, only a read-only call selects a timeout, and
+the bounded interval is the whole attempt. Curo cancels the attempt's derived
+context when the attempt returns, so an attempt must finish using it, for
+example by reading every row of a query, before it returns.
 
 | Parameter | Value |
 | --------- | ----- |
@@ -1266,8 +1343,9 @@ A request reads the published timeout through an atomic pointer without the
 target lock. A timed attempt allocates its derived context and cancel
 function, request copy, attempt state, timer, and timer callback: six
 allocations and 656 bytes in the benchmark. Wrapping the body allocates
-nothing. A request without a timeout allocates nothing for it, and
-`WithTimeoutBounds(0, 0)` keeps every request on that path. Per-route
+nothing. A timed `Engine` attempt has no request to copy, and performs five
+allocations and 336 bytes. A request without a timeout allocates nothing for
+it, and `WithTimeoutBounds(0, 0)` keeps every request on that path. Per-route
 timeouts, body-phase bounds, and write timeouts remain deferred.
 
 ### 15.4 Diagnosis-to-Control Matrix
@@ -1470,6 +1548,13 @@ func New(base http.RoundTripper, options ...Option) (*Transport, error)
 constructed instance. The caller retains the original base transport and can
 continue using it after any construction error.
 
+```go
+func NewEngine(options ...Option) (*Engine, error)
+```
+
+`NewEngine` applies and validates the same options. An `Engine` has no base
+transport, and owns its own registry, budgets, breakers, and guard, which no
+`Transport` or other `Engine` shares.
 ### 17.2 Mode Change
 
 Mode changes are atomic. They affect requests that have not yet taken their
@@ -1513,7 +1598,8 @@ After close, new requests use direct pass-through, so no breaker rejects them,
 mode changes return `ErrClosed`, and the configured mode, aggregate
 statistics, and decision report remain readable.
 Close retains the bounded observer state so an in-flight postflight can finish
-safely.
+safely. Closing an `Engine` works the same way, and calls made after close run
+their attempts directly.
 
 ## 18. Failure Model
 
@@ -1546,6 +1632,7 @@ safely.
 | Base transport ignores the canceled context | Wait for it, return `ErrTimeout`, close any late response |
 | Caller context done | Stop waits and attempts |
 | Base transport panic | Preserve host transport semantics |
+| Base transport or attempt panic during a probe | Reopen for the base cooldown without escalation, let the panic continue |
 | Base transport panic during a timed attempt | Stop the timer, release the derived context, let the panic continue |
 | Timer stop Curo panic after a base transport panic | Count, release the derived context, let the transport's panic continue |
 | Runtime fatal or OOM | Outside recoverable guarantee |
@@ -1576,9 +1663,9 @@ too noisy for repeatable numbers; CI runs every benchmark once so that none of
 them breaks unnoticed.
 
 The observer, diagnoser, policy, retry budget, dependency breaker, and
-adaptive timeout store 10,000 bytes of bounded target state on 64-bit
+adaptive timeout store 10,016 bytes of bounded target state on 64-bit
 platforms. The 128 regular targets plus overflow aggregate therefore use
-about 1.23 MiB, and the 256-entry change journal adds 45,072 bytes, excluding
+about 1.23 MiB, and the 256-entry change journal adds 49,168 bytes, excluding
 bounded map and key overhead. A report allocates detached copies of at most
 128 decisions and 256 changes.
 Benchmarks cover Off, warm Observe, and warm Enforce paths with an already
@@ -1587,6 +1674,10 @@ by an open dependency breaker; all four perform zero Curo heap allocations per
 request with the benchmark base transport. A warm `Enforce` read with an
 adaptive timeout performs six allocations totaling 656 bytes. An `Enforce`
 request to a target in the overflow aggregate also performs zero allocations.
+`Engine.Do` performs zero allocations on the same Off, Observe, Enforce,
+breaker rejection, and overflow paths with an attempt that allocates nothing,
+and a warm `Enforce` read with an adaptive timeout performs five allocations
+totaling 336 bytes. `TestEngineDoAllocations` holds these counts.
 The allocation gates run without the race detector and coverage
 instrumentation, because both change allocation counts. Inputs that
 require case or IP normalization may use bounded transient allocation.
@@ -1701,6 +1792,8 @@ Benchmark:
 - Enforce without an action.
 - Enforce read with an adaptive timeout.
 - Fail-fast rejection by an open dependency breaker.
+- `Engine.Do` in Off, Observe, and Enforce, with an adaptive timeout, and
+  rejected by an open dependency breaker.
 - Retry budget acquisition.
 - Registry hit, miss, overflow, and expiry.
 - Concurrent observation updates.
@@ -1825,6 +1918,35 @@ The initial contract is:
 - `Stats` counts retry attempts, retry successes, retry budget denials,
   breaker openings, breaker probes, breaker rejections, adaptive timeouts in
   `Enforce`, and shadow timeouts in `Observe`.
+- `NewEngine(options...)` returns an `*Engine` or an error, and accepts the
+  same options as `New`. An `Engine` shares no state with a `Transport` or
+  another `Engine`.
+- `Engine.Do(ctx, call, attempt)` returns the error of the attempt that
+  supplies its result, or `ErrBreakerOpen` or `ErrTimeout` as described
+  below. A nil attempt returns an error. A nil ctx, a nil or
+  zero `Engine`, `Off`, a closed `Engine`, and a self-disabled `Engine` run
+  the attempt once with ctx, without Curo. A panic in the attempt propagates
+  unchanged.
+- In `Observe` and `Enforce`, `Classify` runs at most once for each attempt
+  that returned a non-nil error, and never for an attempt that an adaptive
+  timeout ended. A nil `Classify`, `OutcomeUnspecified`, and any value that is
+  not an `Outcome` constant classify the error as a transport failure that is
+  not retryable. A panic in `Classify` is contained, and `Do` returns the
+  attempt's error.
+- In `Enforce`, an open breaker makes `Do` return `ErrBreakerOpen` without
+  running the attempt, and one call at a time runs as a probe after the
+  cooldown. A read-only call, other than a probe, gets the adaptive timeout
+  of its target's decision unless the caller's deadline comes first. Its
+  attempt runs with a derived context, which Curo cancels when the timeout
+  expires or the attempt returns. `Do` waits for the attempt, and returns
+  `ErrTimeout` without retrying if the timeout expired first.
+- In `Enforce`, a replay-safe call whose failure `Classify` marked
+  `Retryable` may run its attempt once more under the conditions of a
+  request retry, and `Do` then returns the retry's error.
+- `Engine.Mode`, `SetMode`, `Close`, `Report`, and `Stats` behave as they do
+  for a `Transport`. For a nil or zero `Engine`, `Mode` reports `Off`,
+  `SetMode` and `Close` return `ErrUninitializedEngine`, `Report` is empty,
+  and `Stats` are zero.
 
 [ADR-0010](../adr/0010-versioning-and-compatibility.md) defines which parts of
 this contract are compatibility promises and how they may change.

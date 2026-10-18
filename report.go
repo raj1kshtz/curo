@@ -12,7 +12,7 @@ import (
 )
 
 // Report is a detached snapshot of published target decisions and recent
-// candidate changes for one Transport.
+// candidate changes for one Transport or Engine.
 //
 // Reports contain normalized target identities and bounded counters. They
 // never include paths, queries, fragments, user information, headers, bodies,
@@ -68,8 +68,8 @@ type Decision struct {
 	Latency Latency
 
 	// Timeout is the adaptive timeout that Enforce applies to the target's
-	// read requests while the decision is current. It is non-zero exactly when
-	// Candidates has CandidateTimeout.
+	// read requests and read-only calls while the decision is current. It is
+	// non-zero exactly when Candidates has CandidateTimeout.
 	Timeout time.Duration
 
 	// PolicyVersion identifies the rules that selected Candidates.
@@ -84,9 +84,10 @@ type Decision struct {
 	// Candidates holds controls the policy considers eligible. Enforce mode
 	// applies CandidateRetry, subject to replay safety, the caller's deadline,
 	// and retry budgets. It applies CandidateBreakerOpen by opening the
-	// target's dependency breaker when a request fails because of the
+	// target's dependency breaker when a request or call fails because of the
 	// dependency. It applies CandidateTimeout by ending a read request that
-	// waits longer than Timeout for response headers.
+	// waits longer than Timeout for response headers, or a read-only call
+	// whose attempt runs longer than Timeout.
 	Candidates Candidates
 }
 
@@ -102,19 +103,20 @@ type Change struct {
 	// Decision is the evaluation that produced the change.
 	Decision Decision
 
-	// Sequence orders changes within one Transport. It starts at 1 and
-	// increases by one per change, so a gap between reads means older changes
-	// were overwritten.
+	// Sequence orders changes within one Transport or Engine. It starts at 1
+	// and increases by one per change, so a gap between reads means older
+	// changes were overwritten.
 	Sequence uint64
 }
 
 // Target is a normalized dependency identity.
 //
-// Host comes from the request URL and can be influenced by untrusted input,
-// for example when an application calls user-supplied URLs. Do not use it as
-// an unbounded metric label.
+// Host comes from the request URL or the Engine call, and can be influenced
+// by untrusted input, for example when an application calls user-supplied
+// URLs. Do not use it as an unbounded metric label.
 type Target struct {
-	// Scheme is "http" or "https".
+	// Scheme is "http" or "https" for a request, and the call's scheme in
+	// lowercase, such as "grpc", for an Engine call.
 	Scheme string
 
 	// Host is a lowercase DNS name without a trailing dot, or a canonical IP
@@ -124,7 +126,7 @@ type Target struct {
 	// Port is the explicit port or the scheme default.
 	Port uint16
 
-	// Method is the request method class.
+	// Method is the method class of the request or call.
 	Method MethodClass
 }
 
@@ -136,13 +138,17 @@ type Evidence struct {
 	// Attempts is the number of dependency-relevant attempts.
 	Attempts uint64
 
-	// DependencyFailures counts transport failures and HTTP 5xx responses.
+	// DependencyFailures counts transport failures, HTTP 5xx responses, and
+	// Engine calls classified as OutcomeDependencyFailure or
+	// OutcomeTransportFailure.
 	DependencyFailures uint64
 
-	// RateLimited counts HTTP 429 responses.
+	// RateLimited counts HTTP 429 responses and Engine calls classified as
+	// OutcomeRateLimited.
 	RateLimited uint64
 
-	// ClientFailures counts HTTP 4xx responses other than 429.
+	// ClientFailures counts HTTP 4xx responses other than 429, and Engine
+	// calls classified as OutcomeClientFailure.
 	ClientFailures uint64
 
 	// Span is the time between the first and last counted attempts.
@@ -154,9 +160,11 @@ type Evidence struct {
 // cover about the last 30 minutes.
 //
 // Every initial attempt that returned a response is a sample of its time to
-// response headers. An attempt that the adaptive timeout ended is a sample at
-// the timeout. Samples are kept in fixed buckets, the slowest of which holds
-// everything above 30 seconds.
+// response headers. Every initial Engine attempt that the dependency answered,
+// which is one with any outcome but OutcomeTransportFailure, is a sample of
+// its time until it returned. An attempt that the adaptive timeout ended is a
+// sample at the timeout. Samples are kept in fixed buckets, the slowest of
+// which holds everything above 30 seconds.
 type Latency struct {
 	// Samples is the number of retained samples.
 	Samples uint64
@@ -167,7 +175,8 @@ type Latency struct {
 	Slowest time.Duration
 }
 
-// MethodClass is a bounded class of HTTP request methods.
+// MethodClass is a bounded class of HTTP request methods. An Engine call is
+// MethodRead when it is read-only and MethodWrite otherwise.
 type MethodClass uint8
 
 const (
@@ -265,8 +274,8 @@ const (
 	// DiagnosisSaturation means the dependency is persistently rate limiting.
 	DiagnosisSaturation
 
-	// DiagnosisClientError means request-side HTTP failures dominate recent
-	// attempts.
+	// DiagnosisClientError means client failures, such as HTTP 4xx responses
+	// other than 429, dominate recent attempts.
 	DiagnosisClientError
 
 	// DiagnosisDegrading means recent failure rate or latency moved materially
@@ -325,11 +334,12 @@ const (
 	// diagnosis class.
 	ReasonInsufficientRecentEvidence
 
-	// ReasonClientFailureRate means request-side HTTP failures dominate recent
-	// attempts.
+	// ReasonClientFailureRate means client failures, such as HTTP 4xx
+	// responses other than 429, dominate recent attempts.
 	ReasonClientFailureRate
 
-	// ReasonRateLimitRate means HTTP 429 responses are sustained.
+	// ReasonRateLimitRate means rate-limited attempts, such as HTTP 429
+	// responses, are sustained.
 	ReasonRateLimitRate
 
 	// ReasonDependencyFailureRate means dependency failures dominate recent
@@ -403,20 +413,22 @@ type Candidates uint8
 
 const (
 	// CandidateRetry marks transient dependency failures as eligible for
-	// budgeted retries of replay-safe requests. Enforce mode applies it.
+	// budgeted retries of replay-safe requests and calls. Enforce mode applies
+	// it.
 	CandidateRetry Candidates = 1 << iota
 
 	// CandidateBreakerOpen marks a dependency that is down as eligible for
 	// opening its dependency breaker. Enforce mode applies it, and requests
-	// then fail fast with ErrBreakerOpen until a probe shows that the
-	// dependency answers again.
+	// and calls then fail fast with ErrBreakerOpen until a probe shows that
+	// the dependency answers again.
 	CandidateBreakerOpen
 
 	// CandidateTimeout marks a target whose retained latency evidence selects
 	// the adaptive timeout in Decision.Timeout. It does not depend on the
-	// diagnosis. Enforce mode applies it to read requests other than breaker
-	// probes, which fail with ErrTimeout when the base transport does not
-	// return response headers in time.
+	// diagnosis. Enforce mode applies it to read requests and read-only calls
+	// other than breaker probes, which fail with ErrTimeout when the base
+	// transport does not return response headers, or the call's attempt does
+	// not return, in time.
 	CandidateTimeout
 )
 
@@ -475,13 +487,21 @@ func (candidates Candidates) MarshalText() ([]byte, error) {
 // returns an empty Report and the failure counts toward InternalFailures and
 // self-disable.
 func (t *Transport) Report() Report {
-	if t == nil || t.base == nil || t.reports == nil {
+	if t == nil || t.base == nil {
+		return Report{}
+	}
+
+	return t.report()
+}
+
+func (c *core) report() Report {
+	if c.reports == nil {
 		return Report{}
 	}
 
 	var report Report
-	if t.guard.Contain(guard.StageReport, func() error {
-		report = newReport(t.reports())
+	if c.guard.Contain(guard.StageReport, func() error {
+		report = newReport(c.reports())
 		return nil
 	}) != guard.Completed {
 		return Report{}

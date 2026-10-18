@@ -5,7 +5,8 @@ import (
 	"strings"
 )
 
-// Mode controls how much authority a Transport has over a request.
+// Mode controls how much authority a Transport has over a request, and an
+// Engine over a call.
 //
 // A Mode prints and encodes as its name, and UnmarshalText accepts the name in
 // any letter case, so flag.TextVar, encoding/json, and other text decoders can
@@ -13,18 +14,21 @@ import (
 type Mode uint32
 
 const (
-	// Off delegates requests without collecting evidence or applying actions.
+	// Off delegates requests, and runs the attempts of calls, without
+	// collecting evidence or applying actions.
 	Off Mode = iota
 
-	// Observe permits evidence collection but does not permit request changes.
+	// Observe permits evidence collection but does not permit changes to
+	// requests or calls.
 	Observe
 
 	// Enforce permits eligible actions within fixed safety bounds: at most one
-	// budgeted retry of a replay-safe request whose target has a current Retry
-	// candidate, failing requests fast with ErrBreakerOpen while the target's
-	// dependency breaker is open, and ending a read request with ErrTimeout
-	// when response headers do not arrive within its target's adaptive
-	// timeout.
+	// budgeted retry of a replay-safe request or call whose target has a
+	// current Retry candidate, failing requests and calls fast with
+	// ErrBreakerOpen while the target's dependency breaker is open, and ending
+	// with ErrTimeout a read request whose response headers do not arrive, or
+	// a read-only call whose attempt does not return, within its target's
+	// adaptive timeout.
 	Enforce
 )
 

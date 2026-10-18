@@ -15,12 +15,55 @@ the compatibility policy.
 
 ### Added
 
+- `Engine`, which applies Curo to calls that do not go through `net/http`,
+  such as gRPC calls, database queries, and the requests of client libraries.
+  `Engine.Do` runs a call's attempt and observes it. In `Enforce`, it can
+  fail the call fast while its target's breaker is open, end a read-only
+  attempt with an adaptive timeout, or retry a replay-safe call once within
+  the retry budgets. `NewEngine` takes the same options as `New`, and an
+  `Engine` has the same `Mode`, `SetMode`, `Close`, `Report`, and `Stats`
+  methods as a `Transport`.
+- `Call`, which describes a call's target, whether it is read-only or
+  replay-safe, and a `Classify` function that maps an attempt's error to a
+  `Classification`: an `Outcome` and whether a retry might succeed. An error
+  that `Classify` does not classify counts as a transport failure that is
+  never retried.
+- `ErrUninitializedEngine`, which `SetMode` and `Close` return for a nil or
+  zero `Engine`.
+- ADR-0012, which records the `Engine` and places protocol adapters that need
+  third-party dependencies, starting with a gRPC interceptor, in nested
+  modules of their own.
+- An `Engine.Do` example, `Engine` benchmarks, and an allocation gate that
+  keeps every `Engine` path free of allocations, except a timed attempt.
 - The documentation explains how Curo works over HTTPS, HTTP/2, and
   unencrypted HTTP/2, how to turn on HTTP/2 health checks in the base
   transport, and why TLS certificate and DNS errors count as dependency
   failures. Tests run Curo's retries, breakers, and timeouts over each
   protocol, and the scope now names the outbound traffic that Curo does not
   cover because it does not go through `net/http`.
+
+### Changed
+
+- Error messages no longer mention HTTP, because `Engine` calls return the
+  same errors. `ErrClosed` reads `curo: closed` instead of
+  `curo: transport is closed`, `ErrTimeout` reads
+  `curo: adaptive timeout expired` instead of
+  `curo: adaptive timeout awaiting response headers`, and the cause of a
+  context that an adaptive timeout ended reads, for example,
+  `curo: adaptive timeout of 2s expired`. The errors match `errors.Is` as
+  before. Migration: compare errors with `errors.Is`, not their text.
+- Target state takes 10,016 bytes instead of 10,000 on 64-bit platforms, and
+  the change journal 49,168 bytes instead of 45,072, because targets keep any
+  URI scheme.
+
+### Fixed
+
+- A breaker probe that returned no result, because a contained internal
+  failure or self-disable kept Curo from recording it or because the base
+  transport panicked, now settles as inconclusive, so the next probe follows
+  after the base cooldown. Before, it held the breaker in its probe until the
+  30-second lease expired, and then counted as a failed probe, which doubled
+  the cooldown.
 
 ## [0.1.0] - 2026-10-04
 

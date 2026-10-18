@@ -1,17 +1,17 @@
 package curo
 
-// Stats is a privacy-safe aggregate snapshot of one Transport.
+// Stats is a privacy-safe aggregate snapshot of one Transport or Engine.
 //
 // Stats never includes target identifiers, URLs, headers, bodies, or raw
-// errors. Fields are sampled independently while requests are in flight.
-// OverflowRequests never exceeds ObservedRequests, RetrySuccesses never
+// errors. Fields are sampled independently while requests or calls are in
+// flight. OverflowRequests never exceeds ObservedRequests, RetrySuccesses never
 // exceeds RetryAttempts, RetryAttempts plus RetryBudgetDenials never exceeds
 // ObservedRequests, ShadowTimeouts never exceeds ObservedRequests, and
 // SelfDisabled implies at least three InternalFailures.
 type Stats struct {
 	// ObservedRequests is the number of completed initial attempts recorded in
-	// Observe or Enforce mode. Retry attempts and requests that failed fast
-	// with ErrBreakerOpen are not included.
+	// Observe or Enforce mode. Retry attempts, and requests and calls that
+	// failed fast with ErrBreakerOpen, are not included.
 	ObservedRequests uint64
 
 	// TrackedTargets is the current number of admitted regular targets. It does
@@ -23,14 +23,15 @@ type Stats struct {
 	OverflowRequests uint64
 
 	// RetryAttempts is the number of retry attempts Curo started in Enforce
-	// mode. Each is one additional base transport call, and a request starts
-	// at most one. Retries the base transport performs internally are not
-	// counted.
+	// mode. Each is one additional base transport call or Engine attempt, and
+	// a request or call starts at most one. Retries that the base transport or
+	// an attempt performs internally are not counted.
 	RetryAttempts uint64
 
-	// RetrySuccesses is the number of retry attempts whose base transport call
-	// returned a 2xx or 3xx response without an error. Reading that response
-	// body can still fail.
+	// RetrySuccesses is the number of retry attempts that succeeded: a base
+	// transport call that returned a 2xx or 3xx response without an error,
+	// though reading its body can still fail, or an Engine attempt that
+	// returned nil or an error classified as OutcomeSuccess.
 	RetrySuccesses uint64
 
 	// RetryBudgetDenials is the number of Enforce retries that met every other
@@ -44,17 +45,19 @@ type Stats struct {
 	// open.
 	BreakerOpens uint64
 
-	// BreakerProbes is the number of requests that open dependency breakers
-	// sent to the base transport as probes after a cooldown.
+	// BreakerProbes is the number of requests and calls that open dependency
+	// breakers let through as probes after a cooldown.
 	BreakerProbes uint64
 
-	// BreakerRejections is the number of requests that failed fast with
-	// ErrBreakerOpen without calling the base transport.
+	// BreakerRejections is the number of requests and calls that failed fast
+	// with ErrBreakerOpen without calling the base transport or running the
+	// attempt.
 	BreakerRejections uint64
 
 	// Timeouts is the number of attempts, including retry attempts, that
 	// Enforce ended with ErrTimeout because the base transport did not return
-	// response headers within the adaptive timeout.
+	// response headers, or an Engine attempt did not return, within the
+	// adaptive timeout.
 	Timeouts uint64
 
 	// ShadowTimeouts is the number of Observe initial attempts that took
@@ -62,14 +65,14 @@ type Stats struct {
 	// Observe never ends an attempt.
 	ShadowTimeouts uint64
 
-	// InternalFailures is the number of contained Curo-owned failures in
-	// request stages and Report. [WithLogger] offers them to its logger,
-	// within the limits that it describes.
+	// InternalFailures is the number of contained Curo-owned failures in the
+	// stages of requests and calls, and in Report. [WithLogger] offers them to
+	// its logger, within the limits that it describes.
 	InternalFailures uint64
 
 	// SelfDisabled reports whether repeated internal failures permanently
-	// selected direct pass-through for this Transport. [WithLogger] offers the
-	// change to its logger once.
+	// selected direct pass-through for this Transport or Engine. [WithLogger]
+	// offers the change to its logger once.
 	SelfDisabled bool
 }
 
@@ -82,13 +85,17 @@ func (t *Transport) Stats() Stats {
 		return Stats{}
 	}
 
-	selfDisabled := t.guard.Disabled()
-	internalFailures := t.guard.Failures()
-	retrySuccesses := t.retries.successes.Load()
-	retryAttempts := t.retries.attempts.Load()
-	retryBudgetDenials := t.retries.budgetDenials.Load()
-	shadowTimeouts := t.timeouts.shadow.Load()
-	observation := t.observer.Stats()
+	return t.stats()
+}
+
+func (c *core) stats() Stats {
+	selfDisabled := c.guard.Disabled()
+	internalFailures := c.guard.Failures()
+	retrySuccesses := c.retries.successes.Load()
+	retryAttempts := c.retries.attempts.Load()
+	retryBudgetDenials := c.retries.budgetDenials.Load()
+	shadowTimeouts := c.timeouts.shadow.Load()
+	observation := c.observer.Stats()
 
 	return Stats{
 		ObservedRequests:   observation.ObservedRequests,
@@ -97,10 +104,10 @@ func (t *Transport) Stats() Stats {
 		RetryAttempts:      retryAttempts,
 		RetrySuccesses:     retrySuccesses,
 		RetryBudgetDenials: retryBudgetDenials,
-		BreakerOpens:       t.breakers.opens.Load(),
-		BreakerProbes:      t.breakers.probes.Load(),
-		BreakerRejections:  t.breakers.rejections.Load(),
-		Timeouts:           t.timeouts.expired.Load(),
+		BreakerOpens:       c.breakers.opens.Load(),
+		BreakerProbes:      c.breakers.probes.Load(),
+		BreakerRejections:  c.breakers.rejections.Load(),
+		Timeouts:           c.timeouts.expired.Load(),
 		ShadowTimeouts:     shadowTimeouts,
 		InternalFailures:   internalFailures,
 		SelfDisabled:       selfDisabled,

@@ -8,13 +8,17 @@ import (
 	"unicode"
 )
 
-const maxHostnameBytes = 253
-
-type scheme uint8
-
 const (
-	schemeHTTP scheme = iota
-	schemeHTTPS
+	maxHostnameBytes = 253
+	maxSchemeBytes   = 32
+)
+
+// Target keys hold these schemes as constants, so neither a request nor
+// retaining its key copies them.
+const (
+	schemeHTTP  = "http"
+	schemeHTTPS = "https"
+	schemeGRPC  = "grpc"
 )
 
 // MethodClass is the bounded request-method dimension of a target identity.
@@ -44,8 +48,8 @@ type Identity struct {
 
 type targetKey struct {
 	host   string
+	scheme string
 	port   uint16
-	scheme scheme
 	method MethodClass
 }
 
@@ -73,15 +77,85 @@ func normalizeTarget(request Request) (targetKey, bool) {
 	}, true
 }
 
-func normalizeScheme(value string) (scheme, uint16, bool) {
+func normalizeScheme(value string) (string, uint16, bool) {
 	switch {
-	case strings.EqualFold(value, "http"):
+	case strings.EqualFold(value, schemeHTTP):
 		return schemeHTTP, 80, true
-	case strings.EqualFold(value, "https"):
+	case strings.EqualFold(value, schemeHTTPS):
 		return schemeHTTPS, 443, true
 	default:
-		return 0, 0, false
+		return "", 0, false
 	}
+}
+
+// normalizeCall normalizes the target of an Engine call. Its scheme may be any
+// URI scheme, but only http and https have a default port, so any other
+// scheme needs an explicit one.
+func normalizeCall(call Call) (targetKey, bool) {
+	normalizedScheme, defaultPort, valid := normalizeCallScheme(call.Scheme)
+	if !valid || call.Method > MethodOther {
+		return targetKey{}, false
+	}
+
+	host, valid := normalizeHostname(call.Hostname)
+	if !valid {
+		return targetKey{}, false
+	}
+
+	port := call.Port
+	if port == 0 {
+		port = defaultPort
+	}
+	if port == 0 {
+		return targetKey{}, false
+	}
+
+	return targetKey{
+		host:   host,
+		port:   port,
+		scheme: normalizedScheme,
+		method: call.Method,
+	}, true
+}
+
+// normalizeCallScheme returns value in lowercase with its default port, if it
+// is a URI scheme of at most maxSchemeBytes: a letter followed by letters,
+// digits, "+", "-", or ".".
+func normalizeCallScheme(value string) (string, uint16, bool) {
+	if normalized, port, valid := normalizeScheme(value); valid {
+		return normalized, port, true
+	}
+	if value == "" || len(value) > maxSchemeBytes || !isLetter(value[0]) {
+		return "", 0, false
+	}
+
+	lower := true
+	for index := 0; index < len(value); index++ {
+		character := value[index]
+		switch {
+		case character >= 'a' && character <= 'z',
+			character >= '0' && character <= '9',
+			character == '+', character == '-', character == '.':
+		case character >= 'A' && character <= 'Z':
+			lower = false
+		default:
+			return "", 0, false
+		}
+	}
+
+	switch {
+	case strings.EqualFold(value, schemeGRPC):
+		return schemeGRPC, 0, true
+	case lower:
+		return value, 0, true
+	default:
+		return strings.ToLower(value), 0, true
+	}
+}
+
+func isLetter(character byte) bool {
+	return character >= 'a' && character <= 'z' ||
+		character >= 'A' && character <= 'Z'
 }
 
 func normalizeHostname(value string) (string, bool) {
@@ -171,6 +245,12 @@ func classifyMethod(method string) MethodClass {
 
 func (key targetKey) retained() targetKey {
 	key.host = strings.Clone(key.host)
+	switch key.scheme {
+	case schemeHTTP, schemeHTTPS, schemeGRPC:
+	default:
+		key.scheme = strings.Clone(key.scheme)
+	}
+
 	return key
 }
 
@@ -186,7 +266,19 @@ func (key targetKey) hash() uint64 {
 		hash *= prime
 	}
 
-	add(byte(key.scheme))
+	// http and https hash as they did when they were the only schemes, so
+	// HTTP targets keep their shards and eviction order.
+	switch key.scheme {
+	case schemeHTTP:
+		add(0)
+	case schemeHTTPS:
+		add(1)
+	default:
+		add(2)
+		for index := 0; index < len(key.scheme); index++ {
+			add(key.scheme[index])
+		}
+	}
 	add(byte(key.method))
 	hash ^= uint64(key.port)
 	hash *= prime
@@ -223,13 +315,8 @@ func (key targetKey) compare(other targetKey) int {
 }
 
 func (key targetKey) identity() Identity {
-	scheme := "http"
-	if key.scheme == schemeHTTPS {
-		scheme = "https"
-	}
-
 	return Identity{
-		Scheme: scheme,
+		Scheme: key.scheme,
 		Host:   key.host,
 		Port:   key.port,
 		Method: key.method,

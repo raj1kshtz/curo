@@ -108,6 +108,14 @@ func (target *target) settleLocked(
 	return true
 }
 
+// discard settles the probe that holds lease as inconclusive.
+func (target *target) discard(tick int64, lease uint64) {
+	target.mu.Lock()
+	defer target.mu.Unlock()
+
+	target.settleLocked(lease, diagnosisCallerOwned, tick)
+}
+
 // mayTripLocked reports whether an attempt that a closed breaker admitted may
 // open it at tick.
 func (target *target) mayTripLocked(tick int64) bool {

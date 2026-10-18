@@ -204,6 +204,36 @@ func classifyQuery(err error) curo.Classification {
 - The mode applies to the whole engine, so give dependencies that roll out
   separately engines of their own.
 
+gRPC calls need no `Classify` of their own: the
+[`curogrpc`](../../curogrpc/README.md) module provides a unary client
+interceptor that runs each call through an `Engine`. Install it as the last
+unary interceptor of the channel, so that it measures only the call:
+
+```go
+interceptor, err := curogrpc.NewUnaryClientInterceptor(engine,
+    curogrpc.WithReadMethods("/inventory.v1.Inventory/GetItem"),
+)
+if err != nil {
+    return err
+}
+
+conn, err := grpc.NewClient("dns:///inventory.internal:443",
+    grpc.WithTransportCredentials(creds),
+    grpc.WithChainUnaryInterceptor(logging, interceptor),
+)
+```
+
+- The interceptor names each target from the channel's target. Use a `dns`
+  target, or a `passthrough` target with a port. Calls on channels with other
+  resolvers, such as `unix` or `xds`, share the overflow aggregate.
+- A method is read-only when `WithReadMethods` lists it, or when its proto
+  declares `idempotency_level = NO_SIDE_EFFECTS`. List only methods that
+  change nothing, as with `ReadOnly`.
+- The interceptor never marks a call replay-safe, so Curo never retries a
+  gRPC call. Configure retries in the channel's retry policy, whose retries
+  and throttling run inside the call that Curo measures.
+- Streams are not intercepted.
+
 ## Bound every request
 
 Curo never extends a caller's deadline, and even in `Enforce` mode it never
@@ -507,6 +537,8 @@ Low-volume dependencies get fewer actions:
 | A dependency that other clients reach is diagnosed `DependencyDown`, or its breaker opens | The client may be misconfigured. Curo counts every transport error as a dependency failure, including a certificate the client cannot verify and a host name that does not resolve. The requests that failed before the breaker opened, and each probe, return the TLS or DNS error. |
 | An `Engine` diagnoses a healthy dependency `DependencyDown`, or opens its breaker | The calls have no `Classify`, or it counts normal answers or the caller's mistakes as failures. [Classify them](#run-other-calls-through-an-engine) as `OutcomeSuccess` or `OutcomeClientFailure`. |
 | Reading results after `Engine.Do` returns fails with a canceled context | The call is read-only and its target has an adaptive timeout, so Curo canceled the attempt's context when the attempt returned. Read every result inside the attempt. |
+| A gRPC dependency never gets an adaptive timeout | `curogrpc` does not know that its methods are read-only. [List them](#run-other-calls-through-an-engine) with `curogrpc.WithReadMethods`, or declare `idempotency_level = NO_SIDE_EFFECTS` in their protos. |
+| gRPC calls count toward the overflow aggregate | The channel's target uses a resolver other than `dns` or `passthrough`, or its `passthrough` target has no port, so `curogrpc` cannot name the target. |
 
 ## Known limitations
 
@@ -527,6 +559,8 @@ Low-volume dependencies get fewer actions:
   `ReadOnly`, or `ReplaySafe` leads to wrong decisions.
 - An adaptive timeout ends an `Engine` attempt only when the attempt honors
   its context, and `Do` waits for the attempt to return.
+- `curogrpc` intercepts only unary calls, and Curo does not cover gRPC
+  streams.
 
 The behavior reference lists the detailed limits of
 [dependency breakers](../reference/behavior.md#dependency-breakers) and

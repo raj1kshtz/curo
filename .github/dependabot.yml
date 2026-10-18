@@ -10,3 +10,24 @@ updates:
     labels:
       - dependencies
       - ci
+
+  # The root module has no dependencies. curogrpc's are updated together, in
+  # one pull request a week.
+  - package-ecosystem: gomod
+    directory: "/curogrpc"
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: "build"
+      include: scope
+    labels:
+      - dependencies
+      - go
+    groups:
+      curogrpc:
+        patterns:
+          - "*"
+    # curogrpc requires the oldest root module version that it works with.
+    # Raise that requirement by hand when curogrpc needs a newer root API.
+    ignore:
+      - dependency-name: github.com/raj1kshtz/curo

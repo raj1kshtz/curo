@@ -2,14 +2,18 @@
 
 ## Supported versions
 
-Security fixes are released for the latest minor version, as patch releases.
+Security fixes are released for the latest minor version of each module, as
+patch releases.
 
-| Version | Supported |
-| --- | --- |
-| 0.1.x | Yes |
-| Commits before `v0.1.0` | No |
+| Module | Version | Supported |
+| --- | --- | --- |
+| `github.com/raj1kshtz/curo` | 0.2.x | Yes |
+| `github.com/raj1kshtz/curo` | 0.1.x and commits before `v0.1.0` | No |
+| `github.com/raj1kshtz/curo/curogrpc` | 0.1.x | Yes |
 
-Upgrade to the latest patch release to receive fixes.
+Upgrade to the latest patch release to receive fixes. A vulnerability in a
+module that `curogrpc` requires, such as grpc-go, is fixed upstream, and a
+`curogrpc` release then requires the fixed version.
 [ADR-0010](../docs/adr/0010-versioning-and-compatibility.md) describes the
 release and compatibility policy.
 

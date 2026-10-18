@@ -59,8 +59,7 @@ type expiry struct {
 }
 
 func (cause *expiry) Error() string {
-	return "curo: adaptive timeout of " + cause.limit.String() +
-		" awaiting response headers"
+	return "curo: adaptive timeout of " + cause.limit.String() + " expired"
 }
 
 // Timeout reports that the cause is a timeout.

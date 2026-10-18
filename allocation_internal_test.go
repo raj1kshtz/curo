@@ -187,3 +187,144 @@ func timedReadTransport(tb testing.TB) (*Transport, *http.Request) {
 
 	return transport, request
 }
+
+// TestEngineDoAllocations gates the per-call allocations of Engine.Do that
+// engine.md section 19 documents, under the rules of TestRoundTripAllocations.
+func TestEngineDoAllocations(t *testing.T) {
+	if raceEnabled || testing.CoverMode() != "" {
+		t.Skip("allocation counts need a build without the race detector or coverage")
+	}
+
+	tests := []struct {
+		setup  func(testing.TB) (*Engine, Call)
+		want   error
+		name   string
+		allocs float64
+	}{
+		{name: "off", setup: warmAllocationEngine(Off)},
+		{name: "observe", setup: warmAllocationEngine(Observe)},
+		{name: "enforce without action", setup: warmAllocationEngine(Enforce)},
+		{name: "breaker rejection", setup: openBreakerEngine, want: ErrBreakerOpen},
+		{name: "overflow aggregate", setup: overflowEngine},
+		{name: "timed read", setup: timedReadEngine, allocs: 5},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			engine, call := test.setup(t)
+			ctx := context.Background()
+
+			var (
+				got      error
+				mismatch bool
+			)
+			allocs := testing.AllocsPerRun(allocationRuns, func() {
+				err := engine.Do(ctx, call, allocationAttempt)
+				if !errors.Is(err, test.want) {
+					got, mismatch = err, true
+				}
+			})
+			if mismatch {
+				t.Fatalf("Do() error = %v, want %v", got, test.want)
+			}
+			if allocs != test.allocs {
+				t.Errorf("Do() allocates %v times per call, want %v", allocs, test.allocs)
+			}
+		})
+	}
+}
+
+// allocationAttempt is an attempt that succeeds without allocating.
+func allocationAttempt(context.Context) error {
+	return nil
+}
+
+// warmAllocationEngine returns a setup for an Engine in mode whose target is
+// already admitted. Its clock never moves, so the target never renews its
+// plan and selects no adaptive timeout.
+func warmAllocationEngine(mode Mode) func(testing.TB) (*Engine, Call) {
+	return func(tb testing.TB) (*Engine, Call) {
+		tb.Helper()
+
+		clock := newReportClock(time.Unix(60_000, 0))
+		engine := newClockedEngine(tb, clock.Now, WithMode(mode))
+		call := engineTestCall()
+		doInternal(tb, engine, call, nil)
+
+		return engine, call
+	}
+}
+
+// overflowEngine returns an Enforce Engine whose registry is full, so call's
+// target is the overflow aggregate.
+func overflowEngine(tb testing.TB) (*Engine, Call) {
+	tb.Helper()
+
+	clock := newReportClock(time.Unix(60_000, 0))
+	engine := newClockedEngine(tb, clock.Now, WithMode(Enforce))
+	call := engineTestCall()
+	for index := range reportTargets {
+		call.Host = fmt.Sprintf("host-%03d.example", index)
+		doInternal(tb, engine, call, nil)
+	}
+	call.Host = "overflow.example"
+	doInternal(tb, engine, call, nil)
+	if stats := engine.Stats(); stats.TrackedTargets != reportTargets ||
+		stats.OverflowRequests != 1 {
+		tb.Fatalf("Stats() = %+v, want %d targets and one overflow call", stats, reportTargets)
+	}
+
+	return engine, call
+}
+
+// openBreakerEngine returns an Enforce Engine whose dependency breaker for
+// call's target is open, so call fails fast without an attempt.
+func openBreakerEngine(tb testing.TB) (*Engine, Call) {
+	tb.Helper()
+
+	clock := newReportClock(time.Unix(60_000, 0))
+	engine := newClockedEngine(tb, clock.Now)
+	call := engineTestCall()
+	for index := range 21 {
+		if index > 0 {
+			clock.Advance(2 * time.Second)
+		}
+		doInternal(tb, engine, call, errEngineInternal)
+	}
+	if err := engine.SetMode(Enforce); err != nil {
+		tb.Fatalf("SetMode(Enforce) error = %v", err)
+	}
+	clock.Advance(2 * time.Second)
+	doInternal(tb, engine, call, errEngineInternal)
+	if opens := engine.Stats().BreakerOpens; opens != 1 {
+		tb.Fatalf("BreakerOpens = %d, want 1", opens)
+	}
+
+	return engine, call
+}
+
+// timedReadEngine returns an Enforce Engine whose target selected the minimum
+// adaptive timeout, so every call is timed. Its clock stops after the
+// warm-up, so the plan never expires.
+func timedReadEngine(tb testing.TB) (*Engine, Call) {
+	tb.Helper()
+
+	clock := newReportClock(time.Unix(60_000, 0))
+	engine := newClockedEngine(tb, clock.Now)
+	call := engineTestCall()
+	for index := range timeout.MinimumSamples + 1 {
+		gap := 500 * time.Millisecond
+		if index == timeout.MinimumSamples {
+			gap = 10 * time.Second
+		}
+		clock.Advance(gap)
+		doInternal(tb, engine, call, nil)
+	}
+	if err := engine.SetMode(Enforce); err != nil {
+		tb.Fatalf("SetMode(Enforce) error = %v", err)
+	}
+	if got := engine.Report().Targets[0].Timeout; got != timeout.DefaultBounds.Minimum {
+		tb.Fatalf("Timeout = %v, want %v", got, timeout.DefaultBounds.Minimum)
+	}
+
+	return engine, call
+}

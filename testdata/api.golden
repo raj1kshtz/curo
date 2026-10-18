@@ -5,12 +5,22 @@
 package curo
 
 var (
-	ErrNilBaseTransport       = errors.New("curo: base transport is nil")
-	ErrInvalidMode            = errors.New("curo: invalid mode")
-	ErrClosed                 = errors.New("curo: transport is closed")
-	ErrBreakerOpen            = errors.New("curo: dependency breaker is open")
-	ErrTimeout          error = &timeoutError{}
+	ErrNilBaseTransport          = errors.New("curo: base transport is nil")
+	ErrInvalidMode               = errors.New("curo: invalid mode")
+	ErrUninitializedEngine       = errors.New("curo: engine is not initialized")
+	ErrClosed                    = errors.New("curo: closed")
+	ErrBreakerOpen               = errors.New("curo: dependency breaker is open")
+	ErrTimeout             error = &timeoutError{}
 )
+
+type Call struct {
+	Classify   func(error) Classification
+	Scheme     string
+	Host       string
+	Port       uint16
+	ReadOnly   bool
+	ReplaySafe bool
+}
 
 type Candidates uint8
 
@@ -29,6 +39,11 @@ func (Candidates) String() string
 type Change struct {
 	Decision Decision
 	Sequence uint64
+}
+
+type Classification struct {
+	Outcome   Outcome
+	Retryable bool
 }
 
 type Decision struct {
@@ -61,6 +76,28 @@ const (
 func (Diagnosis) MarshalText() ([]byte, error)
 
 func (Diagnosis) String() string
+
+type Engine struct {
+	// contains filtered or unexported fields
+}
+
+func NewEngine(options ...Option) (*Engine, error)
+
+func (*Engine) Close() error
+
+func (*Engine) Do(
+	ctx context.Context,
+	call Call,
+	attempt func(context.Context) error,
+) error
+
+func (*Engine) Mode() Mode
+
+func (*Engine) Report() Report
+
+func (*Engine) SetMode(mode Mode) error
+
+func (*Engine) Stats() Stats
 
 type Evidence struct {
 	Attempts           uint64
@@ -111,6 +148,19 @@ func WithLogger(logger *slog.Logger) Option
 func WithMode(mode Mode) Option
 
 func WithTimeoutBounds(minimum, maximum time.Duration) Option
+
+type Outcome uint8
+
+const (
+	OutcomeUnspecified Outcome = iota
+	OutcomeSuccess
+	OutcomeClientFailure
+	OutcomeRateLimited
+	OutcomeDependencyFailure
+	OutcomeTransportFailure
+)
+
+func (Outcome) String() string
 
 type Readiness uint8
 

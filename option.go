@@ -9,7 +9,7 @@ import (
 	"github.com/raj1kshtz/curo/internal/timeout"
 )
 
-// Option configures a Transport during construction.
+// Option configures a Transport or an Engine during construction.
 //
 // Options are created by this package's With functions.
 type Option interface {
@@ -46,7 +46,8 @@ func WithMode(mode Mode) Option {
 // In Enforce mode, a read request to a target with enough latency evidence
 // must receive response headers within the target's adaptive timeout: three
 // times its slowest retained latency, clamped to these bounds. Reading the
-// response body is not bounded. Set the ceiling above the longest time to
+// response body is not bounded. An Engine bounds the whole attempt of a
+// read-only call in the same way. Set the ceiling above the longest time to
 // response headers that a read may legitimately take, because no read may
 // wait longer. Also set it below the deadlines that callers put on those
 // reads: a read is timed only when its deadline leaves more time than its
@@ -76,9 +77,9 @@ func WithTimeoutBounds(minimum, maximum time.Duration) Option {
 // nothing.
 //
 // Curo contains a panic or an error in its own work, including application
-// code that the work calls, such as a body's Close method or an error's Unwrap
-// method. It offers each failure to logger as a Warn record with these
-// attributes:
+// code that the work calls, such as a body's Close method, an error's Unwrap
+// method, or a Call's Classify function. It offers each failure to logger as
+// a Warn record with these attributes:
 //
 //   - stage: the work that failed: preflight, postflight, retry, timeout,
 //     body, or report
@@ -100,16 +101,16 @@ func WithTimeoutBounds(minimum, maximum time.Duration) Option {
 //     that panicked, from the panic outward, without argument values, and
 //     truncated to whole frames within 8 KiB
 //
-// When three internal failures within a minute disable the Transport, it
-// offers that once as an Error record with a failures attribute.
+// When three internal failures within a minute disable the Transport or
+// Engine, it offers that once as an Error record with a failures attribute.
 //
-// A Transport offers one record at a time, and at most three failure records
-// a minute. A failure that happens while a record is offered is skipped,
-// including one that the handler causes by calling the Transport, so the
-// handler is never called reentrantly. The per-minute limit skips no failure
-// before self-disable, only failures in the work that continues afterwards:
-// settling the timeouts of requests in progress, closing bodies, and building
-// reports.
+// A Transport or Engine offers one record at a time, and at most three
+// failure records a minute. A failure that happens while a record is offered
+// is skipped, including one that the handler causes by calling the Transport
+// or Engine, so the handler is never called reentrantly. The per-minute limit
+// skips no failure before self-disable, only failures in the work that
+// continues afterwards: settling the timeouts of requests and calls in
+// progress, closing bodies, and building reports.
 //
 // Records are offered synchronously, outside Curo's locks, with
 // [context.Background]. A failure record is offered on the goroutine where the

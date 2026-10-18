@@ -274,3 +274,56 @@ func ExampleTransport_Report() {
 	// Output:
 	// http Read: readiness=Warming diagnosis=None candidates=None
 }
+
+func ExampleEngine_Do() {
+	engine, err := curo.NewEngine(curo.WithMode(curo.Observe))
+	if err != nil {
+		fmt.Println("setup failed")
+		return
+	}
+	defer func() {
+		_ = engine.Close()
+	}()
+
+	// Classify tells Curo what an error means for the dependency. Here a
+	// missing item is a normal answer, and any other error is a failure of
+	// the dependency that a retry might fix.
+	errNotFound := errors.New("item not found")
+	call := curo.Call{
+		Classify: func(err error) curo.Classification {
+			if errors.Is(err, errNotFound) {
+				return curo.Classification{Outcome: curo.OutcomeSuccess}
+			}
+			return curo.Classification{
+				Outcome:   curo.OutcomeDependencyFailure,
+				Retryable: true,
+			}
+		},
+		Scheme:     "grpc",
+		Host:       "inventory.internal",
+		Port:       443,
+		ReadOnly:   true,
+		ReplaySafe: true,
+	}
+
+	// A real attempt makes the call with the context it receives, such as a
+	// gRPC request, and finishes using that context before it returns.
+	err = engine.Do(context.Background(), call, func(context.Context) error {
+		return errNotFound
+	})
+	fmt.Println(errors.Is(err, errNotFound))
+
+	for _, decision := range engine.Report().Targets {
+		fmt.Printf(
+			"%s %s:%d %s: readiness=%s\n",
+			decision.Target.Scheme,
+			decision.Target.Host,
+			decision.Target.Port,
+			decision.Target.Method,
+			decision.Readiness,
+		)
+	}
+	// Output:
+	// true
+	// grpc inventory.internal:443 Read: readiness=Warming
+}

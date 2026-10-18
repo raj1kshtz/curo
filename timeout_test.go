@@ -65,7 +65,7 @@ func TestWithTimeoutBoundsValidatesBounds(t *testing.T) {
 func TestErrTimeoutIsADeadlineTimeout(t *testing.T) {
 	t.Parallel()
 
-	if got := curo.ErrTimeout.Error(); got != "curo: adaptive timeout awaiting response headers" {
+	if got := curo.ErrTimeout.Error(); got != "curo: adaptive timeout expired" {
 		t.Errorf("Error() = %q", got)
 	}
 	if !errors.Is(curo.ErrTimeout, context.DeadlineExceeded) {

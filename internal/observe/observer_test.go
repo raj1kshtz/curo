@@ -99,6 +99,86 @@ func TestObserverUsesOverflowForInvalidIdentity(t *testing.T) {
 	}
 }
 
+func TestObserverBeginsEngineCalls(t *testing.T) {
+	t.Parallel()
+
+	clock := newObservationClock(time.Unix(2_500, 0))
+	observer := NewWithClock(clock.Now, noTimeouts)
+	if token := (*Observer)(nil).BeginCall(Call{}); token != (Token{}) {
+		t.Errorf("nil Observer BeginCall() = %+v, want empty", token)
+	}
+
+	call := Call{Scheme: "grpc", Hostname: "api.example", Port: 443, Method: MethodWrite}
+	token := observer.BeginCall(call)
+	if token.target == nil || token.overflow || token.context == nil {
+		t.Fatalf("BeginCall() = %+v, want a regular target and a context", token)
+	}
+	want := Identity{Scheme: "grpc", Host: "api.example", Port: 443, Method: MethodWrite}
+	if got := token.target.key.identity(); got != want {
+		t.Errorf("call identity = %+v, want %+v", got, want)
+	}
+	if reused := observer.BeginCall(call); reused.target != token.target {
+		t.Error("same normalized call target was not reused")
+	}
+
+	call.Port = 0
+	overflow := observer.BeginCall(call)
+	if !overflow.overflow || overflow.target != observer.registry.overflow {
+		t.Error("call without a port did not use the overflow target")
+	}
+}
+
+func TestObserverReturnEndsTheAttempt(t *testing.T) {
+	t.Parallel()
+
+	clock := newObservationClock(time.Unix(2_750, 0))
+	observer := NewWithClock(clock.Now, noTimeouts)
+	if token := (*Observer)(nil).Return(Token{}); token != (Token{}) {
+		t.Errorf("nil Observer Return() = %+v, want empty", token)
+	}
+	if token := observer.Return(Token{}); token != (Token{}) {
+		t.Errorf("empty token Return() = %+v, want empty", token)
+	}
+
+	callContext, cancel := context.WithCancel(context.Background())
+	call := Call{
+		Context:  callContext,
+		Scheme:   "grpc",
+		Hostname: "api.example",
+		Port:     443,
+	}
+	stamped := observer.BeginCall(call)
+	unstamped := observer.BeginCall(call)
+	clock.Advance(20 * time.Millisecond)
+	stamped = observer.Return(stamped)
+
+	// Work after the attempt returned, such as classifying its error, counts
+	// toward neither its latency nor the caller's cancellation.
+	clock.Advance(time.Minute)
+	cancel()
+	failure := Result{Err: errors.New("unavailable"), Outcome: OutcomeDependencyFailure}
+	completion := observer.Finish(stamped, failure)
+	if !completion.Recorded ||
+		!completion.DependencyFailure ||
+		completion.Latency != 20*time.Millisecond {
+		t.Errorf(
+			"stamped completion = %+v, want a 20ms dependency failure",
+			completion,
+		)
+	}
+
+	completion = observer.Finish(unstamped, failure)
+	if !completion.Recorded || completion.DependencyFailure {
+		t.Errorf("unstamped completion = %+v, want a caller-owned attempt", completion)
+	}
+
+	canceled := observer.Return(observer.BeginCall(call))
+	completion = observer.Finish(canceled, failure)
+	if !completion.Recorded || completion.DependencyFailure {
+		t.Errorf("canceled completion = %+v, want a caller-owned attempt", completion)
+	}
+}
+
 func TestObserverUsesCapturedContextForCancellation(t *testing.T) {
 	t.Parallel()
 

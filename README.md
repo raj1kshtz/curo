@@ -6,10 +6,12 @@
 [![CI][ci-badge]][ci-workflow]
 [![License][license-badge]](LICENSE)
 
-Curo adds adaptive resilience to outbound HTTP calls in Go. It wraps an
+Curo adds adaptive resilience to outbound calls in Go. It wraps an
 `http.RoundTripper`, learns how each dependency behaves from bounded
 observations of live traffic, and applies budgeted retries, dependency
-breakers, and adaptive timeouts without static thresholds to tune.
+breakers, and adaptive timeouts without static thresholds to tune. An
+`Engine` applies the same controls to calls outside `net/http`, such as gRPC
+calls and database queries.
 
 > [!NOTE]
 > Curo is `v0.x`. Releases follow the
@@ -22,6 +24,9 @@ breakers, and adaptive timeouts without static thresholds to tune.
 - **Drop-in transport.** `curo.New` wraps any `http.RoundTripper`, and an
   `http.Client` uses the result like any other transport. Curo depends only
   on the standard library.
+- **Any dependency.** `curo.NewEngine` brings the same controls to calls that
+  do not go through `net/http`, which the application runs through
+  `Engine.Do` and classifies itself.
 - **Safe rollout.** `Observe`, the default mode, reports what Curo would do
   without changing any request. `Enforce` applies the controls, `Off` passes
   requests straight through, and `SetMode` switches modes at runtime.
@@ -122,6 +127,39 @@ mux.HandleFunc("/debug/curo", func(w http.ResponseWriter, _ *http.Request) {
 A `Report` names the hosts that the application calls, so keep the endpoint
 private.
 
+## Other calls
+
+An `Engine` applies the same controls to calls that do not go through
+`net/http`, such as gRPC calls and database queries. Each call names its
+dependency, says whether it is read-only or safe to repeat, and classifies
+its errors:
+
+```go
+engine, err := curo.NewEngine()
+if err != nil {
+    return err
+}
+
+err = engine.Do(ctx, curo.Call{
+    Classify: classify,
+    Scheme:   "grpc",
+    Host:     "inventory.internal",
+    Port:     443,
+    ReadOnly: true,
+}, func(ctx context.Context) error {
+    item, err = inventory.GetItem(ctx, request)
+    return err
+})
+```
+
+`Classify` tells Curo whether an error is a normal answer, the caller's
+mistake, a rate limit, or a failure of the dependency. Without it, every
+error counts against the dependency. In `Enforce`, `Do` returns
+`curo.ErrBreakerOpen` without running the attempt while the dependency is
+down, and `curo.ErrTimeout` when Curo ended a read-only attempt. The
+[operations guide](docs/guides/operations.md#run-other-calls-through-an-engine)
+explains how to classify errors and when a call may be retried.
+
 ## How it works
 
 ![Curo system context](docs/design/diagrams/system-context.svg)
@@ -160,19 +198,19 @@ trace to include in a bug report.
 
 ## Scope
 
-Curo is an embedded library for outbound `net/http` traffic, and its state
-belongs to one process. It wraps the base transport above the wire
-protocol, so HTTP/1.1, HTTPS, and HTTP/2 need no Curo configuration, and
-tests run it over each of them. The operations guide explains how to
+Curo is an embedded library for outbound calls, and its state belongs to one
+process. A `Transport` wraps the base transport above the wire protocol, so
+HTTP/1.1, HTTPS, and HTTP/2 need no Curo configuration, and tests run it over
+each of them. The operations guide explains how to
 [set up the base transport](docs/guides/operations.md#set-up-the-base-transport),
 including HTTP/2 health checks. Apart from the timeout bounds, every
 threshold is fixed and tuned from evidence.
 
 Curo does not provide sidecars, a control plane, SDKs for other languages,
-ingress middleware, gRPC interception, or machine-learning policy. Outbound
-traffic that does not go through `net/http`, such as database drivers,
-cache and message broker clients, or raw TCP, is outside its scope. The
-operations guide lists the
+ingress middleware, or machine-learning policy. It covers calls that do not
+go through `net/http`, such as database queries or cache commands, only when
+the application runs them through an `Engine`, and it does not cover streams
+or long-lived connections. The operations guide lists the
 [known limitations](docs/guides/operations.md#known-limitations).
 
 ## Documentation
@@ -180,7 +218,7 @@ operations guide lists the
 | Document | Contents |
 | --- | --- |
 | [Package documentation](https://pkg.go.dev/github.com/raj1kshtz/curo) | API reference and runnable examples |
-| [Operations guide](docs/guides/operations.md) | Wiring, HTTPS and HTTP/2, deadlines, timeout bounds, rollout, monitoring, error handling, and incident behavior |
+| [Operations guide](docs/guides/operations.md) | Wiring, HTTPS and HTTP/2, other calls through an `Engine`, deadlines, timeout bounds, rollout, monitoring, error handling, and incident behavior |
 | [Behavior reference](docs/reference/behavior.md) | How each mechanism behaves, its fixed values, and its known limits |
 | [Engine design](docs/design/engine.md) | Runtime architecture, safety boundaries, state ownership, and mitigation design |
 | [Architecture decisions](docs/adr/README.md) | Accepted decisions and the alternatives considered |

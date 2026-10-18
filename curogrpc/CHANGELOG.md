@@ -12,6 +12,10 @@ may change its API, with migration notes under **Changed** or **Removed**.
 
 ## [Unreleased]
 
+### Changed
+
+- Require `google.golang.org/protobuf` v1.36.12 or later, up from v1.36.11.
+
 ## [0.1.0] - 2026-10-18
 
 The first release.

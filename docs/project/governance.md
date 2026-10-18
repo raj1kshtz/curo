@@ -88,6 +88,13 @@ A maintainer makes a release in these steps:
    GOPROXY=https://proxy.golang.org go list -m github.com/raj1kshtz/curo@vX.Y.Z
    ```
 
+   If the proxy reports the version as unknown, something may have asked
+   for it before the tag was pushed. As the
+   [mirror's FAQ](https://proxy.golang.org/) explains, fresh data can then
+   take up to 30 minutes, so repeat the command later. pkg.go.dev can list
+   a version later than the proxy does, and the Request button on the
+   version's page fetches it at once.
+
 Adapter modules, such as `curogrpc`, are released on their own, in the same
 steps with these differences:
 

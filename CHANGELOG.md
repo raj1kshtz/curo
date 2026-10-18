@@ -13,6 +13,11 @@ the compatibility policy.
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-10-18
+
+Curo now applies to calls that do not go through `net/http`, through an
+`Engine`.
+
 ### Added
 
 - `Engine`, which applies Curo to calls that do not go through `net/http`,
@@ -110,5 +115,6 @@ The first release.
   gates, an API gate, full statement coverage, benchmarks, and tests on Go
   1.23, 1.26, and 1.27.
 
-[Unreleased]: https://github.com/raj1kshtz/curo/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/raj1kshtz/curo/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/raj1kshtz/curo/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/raj1kshtz/curo/releases/tag/v0.1.0

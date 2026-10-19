@@ -13,9 +13,14 @@ patch releases.
 
 Upgrade to the latest patch release to receive fixes. A vulnerability in a
 module that `curogrpc` requires, such as grpc-go, is fixed upstream, and a
-`curogrpc` release then requires the fixed version.
+release then requires the fixed version.
 [ADR-0010](../docs/adr/0010-versioning-and-compatibility.md) describes the
 release and compatibility policy.
+
+The upcoming v1 release combines both public packages in the root module,
+as [ADR-0013](../docs/adr/0013-unified-v1.md) records. It is not yet
+published, so the supported released versions above are unchanged. From
+v1, security fixes for either package ship in one root-module release.
 
 ## Reporting a vulnerability
 

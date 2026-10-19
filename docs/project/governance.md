@@ -37,18 +37,21 @@ exists at that time.
 
 ## Releases
 
-Releases follow [Semantic Versioning](https://semver.org/). During `v0.x`, the
-public API may change between minor versions. Breaking changes must be
-documented in [CHANGELOG.md](../../CHANGELOG.md).
+Releases follow [Semantic Versioning](https://semver.org/). Starting with
+the upcoming v1 release, HTTP, `Engine`, and the `curogrpc` package share one
+module version, annotated tag, changelog, and GitHub release. Breaking
+changes in either public package require a new major module version and
+must be documented in [CHANGELOG.md](../../CHANGELOG.md).
 [ADR-0010](../adr/0010-versioning-and-compatibility.md) defines what the
 compatibility promise covers, how releases are made and corrected, and which
 Go versions are supported.
+[ADR-0013](../adr/0013-unified-v1.md) records the v1 module transition.
 
 A maintainer makes a release in these steps:
 
 1. Merge a pull request that moves the `Unreleased` changelog entries into a
    dated section for the new version and updates the comparison links. For a
-   new minor version, it also updates the supported versions in
+   new minor or major version, it also updates the supported versions in
    [SECURITY.md](../../.github/SECURITY.md).
 2. Check out the release commit, the head of `main`, in a clean worktree,
    and confirm that CI passed for it:
@@ -60,10 +63,14 @@ A maintainer makes a release in these steps:
    gh run list --commit "$commit"
    ```
 
-3. Check the module and its API changes against the previous release:
+3. Check the module and its API changes against the previous root release.
+   For v1.0.0, also compare the adapter's API golden and documented behavior
+   with its standalone v0.1.0 release; it was not part of the previous root
+   module, so the root comparison alone cannot detect an adapter regression:
 
    ```sh
-   go run golang.org/x/exp/cmd/gorelease@latest -version=vX.Y.Z
+   go run golang.org/x/exp/cmd/gorelease@latest -base=vPREV -version=vX.Y.Z
+   go test -run '^TestAPI$' ./...
    ```
 
 4. Tag that commit with an annotated tag and push the tag:
@@ -73,12 +80,13 @@ A maintainer makes a release in these steps:
    git push origin vX.Y.Z
    ```
 
-5. Save the version's changelog section to `notes.md`, with each paragraph
+5. Save the version's changelog section to a file outside the repository,
+   such as `../notes.md`, with each paragraph
    and list item on one line, because GitHub keeps single line breaks in
    release notes. Then publish the release:
 
    ```sh
-   gh release create vX.Y.Z --verify-tag --title vX.Y.Z --notes-file notes.md
+   gh release create vX.Y.Z --verify-tag --title vX.Y.Z --notes-file ../notes.md
    ```
 
 6. Fetch the version through the module proxy so that it appears on
@@ -95,28 +103,10 @@ A maintainer makes a release in these steps:
    a version later than the proxy does, and the Request button on the
    version's page fetches it at once.
 
-Adapter modules, such as `curogrpc`, are released on their own, in the same
-steps with these differences:
-
-- The pull request dates the module's own changelog, such as
-  `curogrpc/CHANGELOG.md`.
-- `gorelease` runs in the module's directory, with `-base=none` for the
-  module's first release.
-- The tag and the release name start with the module's directory, such as
-  `curogrpc/vX.Y.Z`, and the release is not marked as the latest, which stays
-  a release of the root module:
-
-  ```sh
-  git tag -a curogrpc/vX.Y.Z -m curogrpc/vX.Y.Z "$commit"
-  git push origin curogrpc/vX.Y.Z
-  gh release create curogrpc/vX.Y.Z --verify-tag --latest=false \
-    --title curogrpc/vX.Y.Z --notes-file notes.md
-  GOPROXY=https://proxy.golang.org \
-    go list -m github.com/raj1kshtz/curo/curogrpc@vX.Y.Z
-  ```
-
-An adapter that needs a new root API waits for a root release that has it,
-and then raises its requirement on the root module.
+No separate adapter tag or release is created for v1 or later. The root
+module's archive includes `curogrpc`, and the same proxy fetch publishes
+both packages. `curogrpc/CHANGELOG.md` is retained only as the historical
+record of the standalone v0 adapter.
 
 A repository ruleset blocks moving or deleting `v*` and `curogrpc/v*` tags.
 Repository admins can bypass it, but ADR-0010 forbids moving or deleting a

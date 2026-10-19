@@ -1,19 +1,44 @@
 # Changelog
 
-All notable changes to the root module, `github.com/raj1kshtz/curo`, are
-documented in this file. The `curogrpc` module has its own
-[changelog](curogrpc/CHANGELOG.md).
+All notable changes to `github.com/raj1kshtz/curo`, including its `curogrpc`
+package, are documented in this file. The former standalone adapter's
+[changelog](curogrpc/CHANGELOG.md) preserves its v0 release history.
 
 The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-While Curo is `v0.x`, a minor release may change the public API. Every
-breaking change is listed under **Changed** or **Removed** with migration
-notes, and [ADR-0010](docs/adr/0010-versioning-and-compatibility.md) defines
-the compatibility policy.
+[ADR-0010](docs/adr/0010-versioning-and-compatibility.md) defines the
+compatibility policy. [ADR-0013](docs/adr/0013-unified-v1.md) records the
+upcoming unified v1 module: breaking changes then require a new major
+version. Every breaking change is listed with migration notes.
 
 ## [Unreleased]
+
+### Added
+
+- ADR-0013, which prepares one v1 module and release for HTTP, `Engine`, and
+  unary gRPC support, with compatibility promises for both public packages.
+
+### Changed
+
+- Move `github.com/raj1kshtz/curo/curogrpc` into the root module as a public
+  package, with no import-path or exported API changes. Both packages will
+  use the single `v1.0.0` tag and root changelog; there will be no separate
+  adapter version or release. Existing v0 tags and releases are unchanged.
+  Migration, after v1 is published: remove the old nested-module requirement
+  with `go mod edit -droprequire=github.com/raj1kshtz/curo/curogrpc`, run
+  `go get github.com/raj1kshtz/curo@v1.0.0`, and run `go mod tidy`. Upgrade any
+  dependency that still requires the old nested module to avoid an ambiguous
+  import.
+- Raise the minimum Go version from 1.23 to 1.26. The root module now requires
+  grpc-go v1.84.0, protobuf v1.36.12, and their transitive dependencies. The
+  root package still imports only the standard library; HTTP-only builds do
+  not compile gRPC packages.
+- Run CI, coverage, API gates, lint, vulnerability checks, and grouped
+  dependency updates for the entire module, including `curogrpc`.
+- Require `google.golang.org/protobuf` v1.36.12 or later, up from v1.36.11 in
+  the standalone adapter's first release.
 
 ## [0.2.0] - 2026-10-18
 

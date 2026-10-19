@@ -1,13 +1,13 @@
 # Curo Engine High-Level Design
 
-- **Status:** Design target for `v0.2.0`
-- **Updated:** 2026-10-18
+- **Status:** Design target for the upcoming `v1.0.0`
+- **Updated:** 2026-10-19
 - **Scope:** Embedded Go engine for outbound `net/http` requests and for
   other calls that applications run through `Engine`
 - **Audience:** Maintainers, contributors, reviewers, and adopters
 
 > [!NOTE]
-> This document describes the intended `v0.2.0` architecture. Sections state
+> This document describes the intended `v1.0.0` architecture. Sections state
 > which parts are implemented today; everything else remains a design target.
 
 ## 1. Executive Summary
@@ -20,9 +20,10 @@ the same engine to calls that do not go through `net/http`, such as gRPC calls
 and database queries, which the application runs through a function.
 
 The engine is local to one host process. It does not depend on a sidecar,
-control plane, external data store, or third-party runtime module. Each Curo
-instance owns its configuration, mode, bounded target registry, adaptive
-state, and lifecycle worker.
+control plane, or external data store. The root package uses only the
+standard library, while the `curogrpc` package uses grpc-go and protobuf in
+the same Go module. Each Curo instance owns its configuration, mode,
+bounded target registry, adaptive state, and lifecycle worker.
 
 Host application safety has precedence over mitigation. Curo-owned failures
 are contained at internal boundaries. A failure before a transport attempt
@@ -35,19 +36,20 @@ side-effect state is unknown.
 This design is governed by the following accepted ADRs:
 
 - [ADR-0001](../adr/0001-embedded-library-over-sidecar-proxy.md):
-  embedded Go library for `v0.x`.
+  embedded Go library, carried into v1 by ADR-0013.
 - [ADR-0002](../adr/0002-host-application-inviolability.md):
   host application inviolability.
 - [ADR-0003](../adr/0003-adaptive-policies-over-static-configuration.md):
   deterministic adaptive policy.
 - [ADR-0004](../adr/0004-zero-dependency-core.md):
-  standard-library-only root module.
+  historical dependency policy, superseded by ADR-0013.
 - [ADR-0005](../adr/0005-operating-modes.md):
   `Off`, `Observe`, and `Enforce`.
 - [ADR-0006](../adr/0006-retry-budgets.md):
   aggregate retry budgets.
 - [ADR-0007](../adr/0007-root-api-and-internal-packages.md):
-  root public API and internal implementation.
+  root public API and internal implementation, with the `curogrpc` public
+  subpackage permitted by ADR-0013.
 - [ADR-0008](../adr/0008-adaptive-dependency-breakers.md):
   adaptive dependency breakers.
 - [ADR-0009](../adr/0009-adaptive-timeouts.md):
@@ -57,7 +59,10 @@ This design is governed by the following accepted ADRs:
 - [ADR-0011](../adr/0011-internal-failure-logging.md):
   internal-failure logging through `log/slog`.
 - [ADR-0012](../adr/0012-engine-and-adapter-modules.md):
-  the protocol-neutral `Engine` and protocol adapter modules.
+  the protocol-neutral `Engine` and gRPC adapter behavior; its module
+  isolation is superseded by ADR-0013.
+- [ADR-0013](../adr/0013-unified-v1.md):
+  one v1 module and release for the root and gRPC packages.
 
 If this document conflicts with an accepted ADR, the ADR controls and this
 document must be corrected.
@@ -77,7 +82,8 @@ The engine must:
 7. Contain recoverable failures originating in Curo-owned code.
 8. Avoid locks across network I/O or host-provided callbacks.
 9. Remain testable with injected time and deterministic decision inputs.
-10. Keep the root module free of third-party dependencies.
+10. Keep the root package free of third-party imports, and version both
+    public packages together.
 
 ## 4. Non-Goals
 
@@ -86,10 +92,9 @@ The engine does not provide:
 - A sidecar proxy, daemon, or centralized control plane.
 - SDKs for languages other than Go.
 - Fleet-wide state or cross-process retry coordination.
-- Ingress middleware, or protocol interception in the root module. Adapters
-  that need a third-party API, such as the gRPC interceptor of `curogrpc`,
-  live in separate modules, as
-  [ADR-0012](../adr/0012-engine-and-adapter-modules.md) records.
+- Ingress middleware or gRPC server interception. Unary gRPC client
+  interception lives in the `curogrpc` package of the root module, as
+  [ADR-0013](../adr/0013-unified-v1.md) records.
 - Automatic coverage of outbound traffic that does not go through
   `net/http`. Database queries, cache and message broker commands, and other
   calls are covered only when the application runs them through `Engine`.

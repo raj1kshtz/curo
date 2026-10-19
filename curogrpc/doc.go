@@ -1,5 +1,8 @@
 // Package curogrpc applies Curo to unary gRPC client calls.
 //
+// This package belongs to the github.com/raj1kshtz/curo module and shares its
+// version and release tag. It has no separate module requirement.
+//
 // [NewUnaryClientInterceptor] returns an interceptor that runs each unary call
 // through a [curo.Engine], which learns how each server behaves from the
 // outcomes of its calls. In [curo.Enforce] mode, the engine fails calls fast

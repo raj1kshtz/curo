@@ -1,20 +1,15 @@
 # Changelog
 
-All notable changes to `github.com/raj1kshtz/curo/curogrpc` are documented
-in this file. The root module has its own
-[changelog](https://github.com/raj1kshtz/curo/blob/main/CHANGELOG.md).
+This file preserves the release history of the former standalone
+`github.com/raj1kshtz/curo/curogrpc` module. Starting with the upcoming v1
+release, `curogrpc` is a package in the root module. All new changes,
+including the protobuf v1.36.12 requirement, are recorded in the
+[root changelog](../CHANGELOG.md).
 
 The format is based on
-[Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this module
-adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html), with
-tags of the form `curogrpc/vX.Y.Z`. While curogrpc is `v0.x`, a minor release
-may change its API, with migration notes under **Changed** or **Removed**.
-
-## [Unreleased]
-
-### Changed
-
-- Require `google.golang.org/protobuf` v1.36.12 or later, up from v1.36.11.
+[Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Historical adapter
+tags and releases remain unchanged. There will be no separate
+`curogrpc/v1.0.0` tag or adapter release.
 
 ## [0.1.0] - 2026-10-18
 
@@ -39,5 +34,4 @@ The first release.
   rejects while the server is down or that an adaptive timeout ended, which
   still match `curo.ErrBreakerOpen` and `curo.ErrTimeout` with `errors.Is`.
 
-[Unreleased]: https://github.com/raj1kshtz/curo/compare/curogrpc/v0.1.0...HEAD
 [0.1.0]: https://github.com/raj1kshtz/curo/releases/tag/curogrpc/v0.1.0

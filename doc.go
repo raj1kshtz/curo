@@ -74,6 +74,11 @@
 // configuration. The [operations guide] shows how to turn on HTTP/2 health
 // checks in the base transport.
 //
+// The [curogrpc package] in the same module provides a unary gRPC client
+// interceptor backed by an Engine. It classifies status codes and identifies
+// read-only methods, while leaving retries to grpc-go. Both packages share
+// the module's version; the root package imports only the standard library.
+//
 // # Safety
 //
 // Curo runs inside the application it protects. A failure inside Curo never
@@ -89,4 +94,5 @@
 //
 // [operations guide]: https://github.com/raj1kshtz/curo/blob/main/docs/guides/operations.md
 // [behavior reference]: https://github.com/raj1kshtz/curo/blob/main/docs/reference/behavior.md
+// [curogrpc package]: https://pkg.go.dev/github.com/raj1kshtz/curo/curogrpc
 package curo

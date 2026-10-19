@@ -10,23 +10,28 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 [ADR-0010](docs/adr/0010-versioning-and-compatibility.md) defines the
 compatibility policy. [ADR-0013](docs/adr/0013-unified-v1.md) records the
-upcoming unified v1 module: breaking changes then require a new major
-version. Every breaking change is listed with migration notes.
+unified v1 module: breaking changes require a new major version. Every
+breaking change is listed with migration notes.
 
 ## [Unreleased]
 
+## [1.0.0] - 2026-10-19
+
+The first stable release brings HTTP, `Engine`, and unary gRPC support into
+one Go module, with one version, tag, and compatibility promise.
+
 ### Added
 
-- ADR-0013, which prepares one v1 module and release for HTTP, `Engine`, and
+- ADR-0013, which records one v1 module and release for HTTP, `Engine`, and
   unary gRPC support, with compatibility promises for both public packages.
 
 ### Changed
 
 - Move `github.com/raj1kshtz/curo/curogrpc` into the root module as a public
-  package, with no import-path or exported API changes. Both packages will
-  use the single `v1.0.0` tag and root changelog; there will be no separate
-  adapter version or release. Existing v0 tags and releases are unchanged.
-  Migration, after v1 is published: remove the old nested-module requirement
+  package, with no import-path or exported API changes. Both packages
+  use the single `v1.0.0` tag and root changelog, with no separate adapter
+  version or release. Existing v0 tags and releases are unchanged.
+  Migration: remove the old nested-module requirement
   with `go mod edit -droprequire=github.com/raj1kshtz/curo/curogrpc`, run
   `go get github.com/raj1kshtz/curo@v1.0.0`, and run `go mod tidy`. Upgrade any
   dependency that still requires the old nested module to avoid an ambiguous
@@ -142,6 +147,7 @@ The first release.
   gates, an API gate, full statement coverage, benchmarks, and tests on Go
   1.23, 1.26, and 1.27.
 
-[Unreleased]: https://github.com/raj1kshtz/curo/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/raj1kshtz/curo/compare/v1.0.0...HEAD
+[1.0.0]: https://github.com/raj1kshtz/curo/compare/v0.2.0...v1.0.0
 [0.2.0]: https://github.com/raj1kshtz/curo/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/raj1kshtz/curo/releases/tag/v0.1.0

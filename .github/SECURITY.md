@@ -2,14 +2,14 @@
 
 ## Supported versions
 
-Security fixes are released for the latest minor version of each module, as
-patch releases.
+Security fixes are released for the latest minor version of Curo, as patch
+releases. Both public packages share the root module's release.
 
 | Module | Version | Supported |
 | --- | --- | --- |
-| `github.com/raj1kshtz/curo` | 0.2.x | Yes |
-| `github.com/raj1kshtz/curo` | 0.1.x and commits before `v0.1.0` | No |
-| `github.com/raj1kshtz/curo/curogrpc` | 0.1.x | Yes |
+| `github.com/raj1kshtz/curo` (including `curogrpc`) | 1.0.x | Yes |
+| `github.com/raj1kshtz/curo` | 0.x and unreleased commits before `v0.1.0` | No |
+| Former `github.com/raj1kshtz/curo/curogrpc` module | 0.x | No |
 
 Upgrade to the latest patch release to receive fixes. A vulnerability in a
 module that `curogrpc` requires, such as grpc-go, is fixed upstream, and a
@@ -17,10 +17,11 @@ release then requires the fixed version.
 [ADR-0010](../docs/adr/0010-versioning-and-compatibility.md) describes the
 release and compatibility policy.
 
-The upcoming v1 release combines both public packages in the root module,
-as [ADR-0013](../docs/adr/0013-unified-v1.md) records. It is not yet
-published, so the supported released versions above are unchanged. From
-v1, security fixes for either package ship in one root-module release.
+From v1.0.0, both public packages belong to the root module, as
+[ADR-0013](../docs/adr/0013-unified-v1.md) records. Security fixes for either
+package ship in one root-module release. Users of the standalone v0
+adapter should follow the
+[migration guide](../curogrpc/README.md#migration-to-v1).
 
 ## Reporting a vulnerability
 

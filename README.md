@@ -14,8 +14,9 @@ breakers, and adaptive timeouts without static thresholds to tune. An
 calls and database queries.
 
 > [!NOTE]
-> The next release, `v1.0.0`, is not yet published. It brings HTTP and unary
-> gRPC support into one Go module, with one version and release tag.
+> Curo v1.0.0 brings HTTP and unary gRPC support into one Go module, with
+> one version and release tag. Both public packages have a stable API:
+> breaking changes require a new major module version.
 > [ADR-0013](docs/adr/0013-unified-v1.md) records the module transition and
 > the v1 compatibility commitment. Published v0 releases remain unchanged.
 
@@ -51,13 +52,12 @@ calls and database queries.
 ## Install
 
 ```sh
-go get github.com/raj1kshtz/curo@latest
+go get github.com/raj1kshtz/curo@v1.0.0
 ```
 
-The upcoming v1 module requires Go 1.26 or later. Until v1 is published,
-`@latest` resolves to v0.2.0, which requires Go 1.23 and does not include the
-gRPC package. See the [gRPC migration guide](curogrpc/README.md#migration-to-v1)
-when upgrading from the separate v0 adapter module.
+Curo requires Go 1.26 or later. See the
+[gRPC migration guide](curogrpc/README.md#migration-to-v1) when upgrading
+from the separate v0 adapter module.
 
 ## Quick start
 

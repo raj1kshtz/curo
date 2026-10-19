@@ -1,6 +1,8 @@
 # ADR-0007: Expose the Public API at the Module Root
 
 - **Status:** Accepted
+- **Amendment:** [ADR-0013](0013-unified-v1.md) supersedes the separate-module
+  rule for the public `curogrpc` package.
 - **Date:** 2026-09-30
 - **Scope:** Go repository and package structure
 - **Decision owners:** Curo maintainers

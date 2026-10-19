@@ -94,43 +94,25 @@ The golden file shows declarations, not the values of constants, so
 number and name of every enumeration value. Add a row for a new value, and
 never change an existing row.
 
-CI runs the tests on Go 1.23, the minimum version in `go.mod`, and on the two
-most recent Go releases.
+CI tests the minimum Go version in `go.mod` and the two most recent Go
+releases, without duplicating overlapping versions: currently Go 1.26 and
+1.27. Both public packages belong to the root module, so every `./...`
+command above includes `curogrpc`. No temporary workspace is needed.
 
-`curogrpc` is a separate module with its own `go.mod`, which `./...` in the
-repository root does not include. Run the same checks in its directory, where
-`golangci-lint` finds the root configuration:
-
-```sh
-cd curogrpc
-go vet ./...
-go test -race ./...
-golangci-lint run
-govulncheck ./...
-```
-
-`curogrpc` builds against the root module version that its `go.mod`
-requires, and CI also tests it against the root module of the pull request.
-To do the same locally, create a workspace, which `.gitignore` keeps out of
-commits:
+Each public package has a `TestAPI` and `testdata/api.golden`. To update only
+the adapter's API golden after an intentional change:
 
 ```sh
-go work init . ./curogrpc
-go test ./curogrpc/...
+go test -run '^TestAPI$' -update ./curogrpc
 ```
-
-Remove `go.work` afterwards: in a workspace, `./...` in the root also matches
-`curogrpc`, which needs a newer Go version than the root module. `curogrpc`
-has its own `testdata/api.golden` and changelog, and CI tests it on Go 1.26,
-the minimum in its `go.mod`, and on the two most recent Go releases.
 
 ## Documentation
 
 - Keep architecture diagram sources and rendered SVGs synchronized. Rendering
   instructions live in
   [`docs/design/diagrams/README.md`](../docs/design/diagrams/README.md).
-- Update related ADRs, and the changelog of each module that changes, in the
-  same pull request.
+- Update related ADRs and the root changelog in the same pull request.
+  `curogrpc/CHANGELOG.md` is an archive of the standalone adapter's v0 history.
 - Update the [behavior reference](../docs/reference/behavior.md) when a
   mechanism's behavior changes, and the
   [operations guide](../docs/guides/operations.md) when the advice for

@@ -8,18 +8,40 @@ from the outcomes of its calls. In `Enforce` mode, the engine fails calls
 fast while a server is down, and ends a read-only call that takes much longer
 than the server's recent calls.
 
-curogrpc is a separate module, so only applications that import it depend on
-grpc-go. The root module, `github.com/raj1kshtz/curo`, stays free of
-third-party dependencies.
+curogrpc is a package in the `github.com/raj1kshtz/curo` module. Starting
+with the upcoming v1 release, HTTP and gRPC support share one version, tag,
+changelog, and GitHub release. The module requires grpc-go and protobuf;
+HTTP-only applications do not compile the adapter's packages.
 
 ## Install
 
 ```sh
-go get github.com/raj1kshtz/curo/curogrpc@latest
+go get github.com/raj1kshtz/curo@v1.0.0
 ```
 
-curogrpc requires Go 1.26 or later, `github.com/raj1kshtz/curo` v0.2.0 or
-later, and `google.golang.org/grpc` v1.84.0 or later.
+This command is for use after v1.0.0 is published; that release is not yet
+available. The unified module requires Go 1.26 or later,
+`google.golang.org/grpc` v1.84.0 or later, and
+`google.golang.org/protobuf` v1.36.12 or later. The package import remains
+`github.com/raj1kshtz/curo/curogrpc`.
+
+## Migration to v1
+
+For an application that uses the standalone v0 adapter, remove its module
+requirement before upgrading the root module:
+
+```sh
+go mod edit -droprequire=github.com/raj1kshtz/curo/curogrpc
+go get github.com/raj1kshtz/curo@v1.0.0
+go mod tidy
+```
+
+Run these commands only after v1.0.0 is published. No source import or
+interceptor API changes are needed. If another dependency still requires
+the old adapter module, upgrade that dependency too; otherwise Go can
+report an ambiguous import because both modules contain the same package.
+Use `go mod graph` to find remaining nested-module requirements. Historical
+`curogrpc/v0.1.0` tags and releases remain available for existing v0 users.
 
 ## Usage
 
@@ -111,15 +133,17 @@ Every other error passes through unchanged.
   server applied it.
 
 [ADR-0012][adr-0012] records the design and the alternatives that were
-rejected.
+rejected. [ADR-0013][adr-0013] replaces its separate-module decision for v1.
 
 ## Compatibility
 
-curogrpc has its own `v0.x` versions, tagged `curogrpc/vX.Y.Z`, under
-Curo's [compatibility policy][adr-0010]. `TestAPI` compares its exported API
-with `testdata/api.golden`. CI tests Go 1.26, the minimum in its `go.mod`,
-and the two most recent Go releases. The [changelog](CHANGELOG.md) lists the
-changes in each release.
+curogrpc follows the root module's version and [compatibility policy][adr-0010],
+as extended to both packages by [ADR-0013][adr-0013]. Starting with v1, a
+breaking change requires a new major module version. `TestAPI` compares its
+exported API with `testdata/api.golden`. The root CI commands include this
+package on Go 1.26 and 1.27. The [root changelog](../CHANGELOG.md) lists new
+changes; the [archived changelog](CHANGELOG.md) preserves the standalone
+adapter's v0 history.
 
 ## License
 
@@ -130,5 +154,6 @@ changes in each release.
 [curo]: https://github.com/raj1kshtz/curo
 [rollout]: https://github.com/raj1kshtz/curo/blob/main/docs/guides/operations.md#roll-out-enforce
 [adr-0012]: https://github.com/raj1kshtz/curo/blob/main/docs/adr/0012-engine-and-adapter-modules.md
+[adr-0013]: https://github.com/raj1kshtz/curo/blob/main/docs/adr/0013-unified-v1.md
 [adr-0010]: https://github.com/raj1kshtz/curo/blob/main/docs/adr/0010-versioning-and-compatibility.md
 [license]: https://github.com/raj1kshtz/curo/blob/main/LICENSE

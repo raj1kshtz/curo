@@ -1,6 +1,6 @@
 # ADR-0004: Keep the Core Module Free of Third-Party Dependencies
 
-- **Status:** Accepted
+- **Status:** Superseded by [ADR-0013](0013-unified-v1.md)
 - **Date:** 2026-09-30
 - **Scope:** Root Go module
 - **Decision owners:** Curo maintainers

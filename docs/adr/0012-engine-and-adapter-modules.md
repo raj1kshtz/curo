@@ -1,6 +1,8 @@
 # ADR-0012: Extend Curo Beyond net/http Through an Engine and Adapter Modules
 
 - **Status:** Accepted
+- **Amendment:** [ADR-0013](0013-unified-v1.md) supersedes adapter module
+  isolation and independent versioning; the runtime decisions remain in force.
 - **Date:** 2026-10-18
 - **Scope:** The `Engine` API and protocol adapter modules, starting with
   `curogrpc`

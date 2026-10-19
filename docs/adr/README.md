@@ -15,13 +15,13 @@ together. Code and API documentation define the exact implementation.
    [Guarantee Host Application Inviolability](0002-host-application-inviolability.md)
 3. **ADR-0003 - Accepted**
    [Prefer Adaptive Policies Over Static Thresholds](0003-adaptive-policies-over-static-configuration.md)
-4. **ADR-0004 - Accepted**
+4. **ADR-0004 - Superseded by ADR-0013**
    [Keep the Core Module Free of Third-Party Dependencies](0004-zero-dependency-core.md)
 5. **ADR-0005 - Accepted**
    [Use Off, Observe, and Enforce Operating Modes](0005-operating-modes.md)
 6. **ADR-0006 - Accepted**
    [Govern Retries with Aggregate Budgets](0006-retry-budgets.md)
-7. **ADR-0007 - Accepted**
+7. **ADR-0007 - Accepted, amended by ADR-0013**
    [Expose the Public API at the Module Root](0007-root-api-and-internal-packages.md)
 8. **ADR-0008 - Accepted**
    [Fail Fast Through Adaptive Dependency Breakers](0008-adaptive-dependency-breakers.md)
@@ -31,8 +31,10 @@ together. Code and API documentation define the exact implementation.
     [Version Releases with an Explicit Compatibility Promise](0010-versioning-and-compatibility.md)
 11. **ADR-0011 - Accepted**
     [Log Internal Failures Through log/slog](0011-internal-failure-logging.md)
-12. **ADR-0012 - Accepted**
+12. **ADR-0012 - Accepted, amended by ADR-0013**
     [Extend Curo Beyond net/http Through an Engine and Adapter Modules](0012-engine-and-adapter-modules.md)
+13. **ADR-0013 - Accepted**
+    [Unify HTTP and gRPC in One v1 Module](0013-unified-v1.md)
 
 ## Lifecycle
 

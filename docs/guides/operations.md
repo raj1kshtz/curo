@@ -113,7 +113,7 @@ connections, so it cannot replace the connection. HTTP/2 health checks let
 the base transport detect and close it, and the next request dials a new
 one. Requests still in flight on it fail with a transport error, which
 `Enforce` can retry when they are replay-safe reads. Health checks are off
-by default. On Go 1.24 and later, turn them on in the base transport:
+by default. Turn them on in the base transport:
 
 ```go
 base := http.DefaultTransport.(*http.Transport).Clone()
@@ -128,9 +128,7 @@ transport, err := curo.New(base)
 The base transport pings a connection that has received nothing for
 `SendPingTimeout` and closes it if no reply arrives within `PingTimeout`, so
 these values close a dead connection within about 20 seconds of the last
-frame it received. On Go 1.23, `golang.org/x/net/http2.ConfigureTransports`
-returns the HTTP/2 transport, whose `ReadIdleTimeout` and `PingTimeout`
-fields do the same.
+frame it received.
 
 ## Run other calls through an Engine
 
@@ -205,7 +203,7 @@ func classifyQuery(err error) curo.Classification {
   separately engines of their own.
 
 gRPC calls need no `Classify` of their own: the
-[`curogrpc`](../../curogrpc/README.md) module provides a unary client
+[`curogrpc`](../../curogrpc/README.md) package provides a unary client
 interceptor that runs each call through an `Engine`. Install it as the last
 unary interceptor of the channel, so that it measures only the call:
 

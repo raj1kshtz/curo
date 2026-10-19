@@ -14,21 +14,21 @@ breakers, and adaptive timeouts without static thresholds to tune. An
 calls and database queries.
 
 > [!NOTE]
-> Curo is `v0.x`. Releases follow the
-> [compatibility policy](docs/adr/0010-versioning-and-compatibility.md), and a
-> minor release may still make a breaking change, with migration notes in the
-> [changelog](CHANGELOG.md).
+> The next release, `v1.0.0`, is not yet published. It brings HTTP and unary
+> gRPC support into one Go module, with one version and release tag.
+> [ADR-0013](docs/adr/0013-unified-v1.md) records the module transition and
+> the v1 compatibility commitment. Published v0 releases remain unchanged.
 
 ## Features
 
 - **Drop-in transport.** `curo.New` wraps any `http.RoundTripper`, and an
-  `http.Client` uses the result like any other transport. Curo depends only
-  on the standard library.
+  `http.Client` uses the result like any other transport. The root package
+  imports only the standard library.
 - **Any dependency.** `curo.NewEngine` brings the same controls to calls that
   do not go through `net/http`, which the application runs through
-  `Engine.Do` and classifies itself. The separate
-  [`curogrpc`](curogrpc/README.md) module does this for unary gRPC calls with
-  one interceptor.
+  `Engine.Do` and classifies itself. The
+  [`curogrpc`](curogrpc/README.md) package in the same module does this for
+  unary gRPC calls with one interceptor.
 - **Safe rollout.** `Observe`, the default mode, reports what Curo would do
   without changing any request. `Enforce` applies the controls, `Off` passes
   requests straight through, and `SetMode` switches modes at runtime.
@@ -54,7 +54,10 @@ calls and database queries.
 go get github.com/raj1kshtz/curo@latest
 ```
 
-Curo requires Go 1.23 or later.
+The upcoming v1 module requires Go 1.26 or later. Until v1 is published,
+`@latest` resolves to v0.2.0, which requires Go 1.23 and does not include the
+gRPC package. See the [gRPC migration guide](curogrpc/README.md#migration-to-v1)
+when upgrading from the separate v0 adapter module.
 
 ## Quick start
 
@@ -162,7 +165,7 @@ down, and `curo.ErrTimeout` when Curo ended a read-only attempt. The
 [operations guide](docs/guides/operations.md#run-other-calls-through-an-engine)
 explains how to classify errors and when a call may be retried.
 
-For gRPC, the [`curogrpc`](curogrpc/README.md) module provides a unary client
+For gRPC, the [`curogrpc`](curogrpc/README.md) package provides a unary client
 interceptor that runs each call through an `Engine`. It names each target
 from the channel, finds read-only methods in a list or in their protos, and
 classifies status codes:
@@ -179,12 +182,15 @@ conn, err := grpc.NewClient(target,
 )
 ```
 
-`curogrpc` is a separate module, so only applications that import it depend
-on grpc-go:
+Import the adapter from the same module:
 
-```sh
-go get github.com/raj1kshtz/curo/curogrpc@latest
+```go
+import "github.com/raj1kshtz/curo/curogrpc"
 ```
+
+Both packages share the root module's version and tag. The module now
+requires grpc-go and protobuf, even for HTTP-only consumers, but those
+packages are compiled into an application only when its imports need them.
 
 ## How it works
 
@@ -245,7 +251,7 @@ The operations guide lists the
 | Document | Contents |
 | --- | --- |
 | [Package documentation](https://pkg.go.dev/github.com/raj1kshtz/curo) | API reference and runnable examples |
-| [curogrpc](curogrpc/README.md) | The gRPC client interceptor module: setup, targets, read-only methods, status codes, and limits |
+| [curogrpc](curogrpc/README.md) | The gRPC client interceptor package: setup, targets, read-only methods, status codes, and limits |
 | [Operations guide](docs/guides/operations.md) | Wiring, HTTPS and HTTP/2, other calls through an `Engine`, deadlines, timeout bounds, rollout, monitoring, error handling, and incident behavior |
 | [Behavior reference](docs/reference/behavior.md) | How each mechanism behaves, its fixed values, and its known limits |
 | [Engine design](docs/design/engine.md) | Runtime architecture, safety boundaries, state ownership, and mitigation design |
@@ -260,9 +266,12 @@ Curo follows [Semantic Versioning](https://semver.org/).
 [ADR-0010](docs/adr/0010-versioning-and-compatibility.md) defines what a
 release promises: the exported API and its documented behavior, `errors.Is`
 identities, and the names and JSON encodings of modes and reports. Adaptive
-tuning may improve in any minor release. Curo supports Go 1.23 and later, and
-CI tests Go 1.23 and the two most recent Go releases. `curogrpc` has its own
-versions, tagged `curogrpc/vX.Y.Z`, and requires Go 1.26 or later.
+tuning may improve in any minor release.
+[ADR-0013](docs/adr/0013-unified-v1.md) extends the compatibility promise to
+both public packages under one module. From v1, a breaking change in either
+package requires a new major module version. Both packages require Go 1.26
+or later. CI tests the minimum and the two most recent Go releases, without
+duplicating overlapping versions; currently Go 1.26 and 1.27.
 
 ## Contributing
 

@@ -1,14 +1,14 @@
 # Changelog
 
 This file preserves the release history of the former standalone
-`github.com/raj1kshtz/curo/curogrpc` module. Starting with the upcoming v1
-release, `curogrpc` is a package in the root module. All new changes,
+`github.com/raj1kshtz/curo/curogrpc` module. Starting with v1.0.0,
+`curogrpc` is a package in the root module. All new changes,
 including the protobuf v1.36.12 requirement, are recorded in the
 [root changelog](../CHANGELOG.md).
 
 The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Historical adapter
-tags and releases remain unchanged. There will be no separate
+tags and releases remain unchanged. There is no separate
 `curogrpc/v1.0.0` tag or adapter release.
 
 ## [0.1.0] - 2026-10-18

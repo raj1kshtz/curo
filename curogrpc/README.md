@@ -8,9 +8,9 @@ from the outcomes of its calls. In `Enforce` mode, the engine fails calls
 fast while a server is down, and ends a read-only call that takes much longer
 than the server's recent calls.
 
-curogrpc is a package in the `github.com/raj1kshtz/curo` module. Starting
-with the upcoming v1 release, HTTP and gRPC support share one version, tag,
-changelog, and GitHub release. The module requires grpc-go and protobuf;
+curogrpc is a package in the `github.com/raj1kshtz/curo` module. From v1,
+HTTP and gRPC support share one version, tag, changelog, and GitHub release.
+The module requires grpc-go and protobuf;
 HTTP-only applications do not compile the adapter's packages.
 
 ## Install
@@ -19,8 +19,7 @@ HTTP-only applications do not compile the adapter's packages.
 go get github.com/raj1kshtz/curo@v1.0.0
 ```
 
-This command is for use after v1.0.0 is published; that release is not yet
-available. The unified module requires Go 1.26 or later,
+The unified module requires Go 1.26 or later,
 `google.golang.org/grpc` v1.84.0 or later, and
 `google.golang.org/protobuf` v1.36.12 or later. The package import remains
 `github.com/raj1kshtz/curo/curogrpc`.
@@ -36,9 +35,9 @@ go get github.com/raj1kshtz/curo@v1.0.0
 go mod tidy
 ```
 
-Run these commands only after v1.0.0 is published. No source import or
-interceptor API changes are needed. If another dependency still requires
-the old adapter module, upgrade that dependency too; otherwise Go can
+No source import or interceptor API changes are needed. If another
+dependency still requires the old adapter module, upgrade that dependency
+too; otherwise Go can
 report an ambiguous import because both modules contain the same package.
 Use `go mod graph` to find remaining nested-module requirements. Historical
 `curogrpc/v0.1.0` tags and releases remain available for existing v0 users.

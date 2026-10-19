@@ -37,9 +37,9 @@ exists at that time.
 
 ## Releases
 
-Releases follow [Semantic Versioning](https://semver.org/). Starting with
-the upcoming v1 release, HTTP, `Engine`, and the `curogrpc` package share one
-module version, annotated tag, changelog, and GitHub release. Breaking
+Releases follow [Semantic Versioning](https://semver.org/). From v1.0.0,
+HTTP, `Engine`, and the `curogrpc` package share one module version,
+annotated tag, changelog, and GitHub release. Breaking
 changes in either public package require a new major module version and
 must be documented in [CHANGELOG.md](../../CHANGELOG.md).
 [ADR-0010](../adr/0010-versioning-and-compatibility.md) defines what the

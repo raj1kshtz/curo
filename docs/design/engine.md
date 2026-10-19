@@ -1,6 +1,6 @@
 # Curo Engine High-Level Design
 
-- **Status:** Design target for the upcoming `v1.0.0`
+- **Status:** Design for `v1.0.0`
 - **Updated:** 2026-10-19
 - **Scope:** Embedded Go engine for outbound `net/http` requests and for
   other calls that applications run through `Engine`

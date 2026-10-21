@@ -20,6 +20,7 @@ breaking change is listed with migration notes.
 - A synthetic HTTP and unary gRPC evaluation for v1.0.0, with measured
   outcomes, recovery costs, workload methodology, and SVG charts. See the
   [evaluation report](docs/evaluations/v1.0.0-synthetic-http-grpc.md).
+  The repository README summarizes the results and links to the full report.
 
 ## [1.0.0] - 2026-10-19
 

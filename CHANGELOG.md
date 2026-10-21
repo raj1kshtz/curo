@@ -15,6 +15,12 @@ breaking change is listed with migration notes.
 
 ## [Unreleased]
 
+### Added
+
+- A synthetic HTTP and unary gRPC evaluation for v1.0.0, with measured
+  outcomes, recovery costs, workload methodology, and SVG charts. See the
+  [evaluation report](docs/evaluations/v1.0.0-synthetic-http-grpc.md).
+
 ## [1.0.0] - 2026-10-19
 
 The first stable release brings HTTP, `Engine`, and unary gRPC support into

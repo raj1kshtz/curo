@@ -1,0 +1,109 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1120" height="1085" viewBox="0 0 1120 1085" role="img" aria-labelledby="title description">
+<title id="title">Dependency attempts per offered call</title>
+<desc id="description">Scripted error outages; lower load means protection, not successful API calls.</desc>
+<style>text{font-family:Arial,Helvetica,sans-serif;fill:#172033;font-size:13px}.title{font-size:24px;font-weight:700}.subtitle{font-size:14px;fill:#475569}.label{font-size:14px;font-weight:600}.detail{font-size:11px;fill:#475569}.tick{font-size:12px;fill:#475569}.value{font-size:12px;font-weight:600}.inside{fill:white;font-size:12px;font-weight:600}</style>
+<rect width="1120" height="1085" fill="#ffffff"/>
+<text x="30.00" y="38.00" class="title">Dependency attempts per offered call</text>
+<text x="30.00" y="66.00" class="subtitle">Scripted error outages; lower load means protection, not successful API calls.</text>
+<rect x="245.00" y="91" width="12" height="12" rx="2" fill="#64748b"/>
+<text x="264.00" y="102.00" class="">Off</text>
+<rect x="430.00" y="91" width="12" height="12" rx="2" fill="#2563eb"/>
+<text x="449.00" y="102.00" class="">Observe</text>
+<rect x="615.00" y="91" width="12" height="12" rx="2" fill="#0f766e"/>
+<text x="634.00" y="102.00" class="">Enforce</text>
+<line x1="245.00" x2="245.00" y1="140" y2="1035.00" stroke="#e2e8f0"/>
+<text x="235.00" y="131.00" class="tick">0.0</text>
+<line x1="358.33" x2="358.33" y1="140" y2="1035.00" stroke="#e2e8f0"/>
+<text x="348.33" y="131.00" class="tick">0.2</text>
+<line x1="471.67" x2="471.67" y1="140" y2="1035.00" stroke="#e2e8f0"/>
+<text x="461.67" y="131.00" class="tick">0.4</text>
+<line x1="585.00" x2="585.00" y1="140" y2="1035.00" stroke="#e2e8f0"/>
+<text x="575.00" y="131.00" class="tick">0.6</text>
+<line x1="698.33" x2="698.33" y1="140" y2="1035.00" stroke="#e2e8f0"/>
+<text x="688.33" y="131.00" class="tick">0.8</text>
+<line x1="811.67" x2="811.67" y1="140" y2="1035.00" stroke="#e2e8f0"/>
+<text x="801.67" y="131.00" class="tick">1.0</text>
+<line x1="925.00" x2="925.00" y1="140" y2="1035.00" stroke="#e2e8f0"/>
+<text x="915.00" y="131.00" class="tick">1.2</text>
+<text x="30.00" y="183.00" class="label">burst / gRPC</text>
+<text x="30.00" y="202.00" class="detail">9000 calls/mode; pooled trials</text>
+<rect data-series="Off" data-value="1.000000" data-max="1.200000" x="245.00" y="160.00" width="566.67" height="17" rx="3" fill="#64748b"><title>burst / gRPC / Off: 1.000</title></rect>
+<text x="819.67" y="173.00" class="value">1.000</text>
+<rect data-series="Observe" data-value="1.000000" data-max="1.200000" x="245.00" y="183.00" width="566.67" height="17" rx="3" fill="#2563eb"><title>burst / gRPC / Observe: 1.000</title></rect>
+<text x="819.67" y="196.00" class="value">1.000</text>
+<rect data-series="Enforce" data-value="0.115333" data-max="1.200000" x="245.00" y="206.00" width="65.36" height="17" rx="3" fill="#0f766e"><title>burst / gRPC / Enforce: 0.115</title></rect>
+<text x="318.36" y="219.00" class="value">0.115</text>
+<text x="30.00" y="271.00" class="label">burst / HTTP</text>
+<text x="30.00" y="290.00" class="detail">9000 calls/mode; pooled trials</text>
+<rect data-series="Off" data-value="1.000000" data-max="1.200000" x="245.00" y="248.00" width="566.67" height="17" rx="3" fill="#64748b"><title>burst / HTTP / Off: 1.000</title></rect>
+<text x="819.67" y="261.00" class="value">1.000</text>
+<rect data-series="Observe" data-value="1.000000" data-max="1.200000" x="245.00" y="271.00" width="566.67" height="17" rx="3" fill="#2563eb"><title>burst / HTTP / Observe: 1.000</title></rect>
+<text x="819.67" y="284.00" class="value">1.000</text>
+<rect data-series="Enforce" data-value="0.127333" data-max="1.200000" x="245.00" y="294.00" width="72.16" height="17" rx="3" fill="#0f766e"><title>burst / HTTP / Enforce: 0.127</title></rect>
+<text x="325.16" y="307.00" class="value">0.127</text>
+<text x="30.00" y="359.00" class="label">mixed / gRPC</text>
+<text x="30.00" y="378.00" class="detail">1800 calls/mode; pooled trials</text>
+<rect data-series="Off" data-value="1.000000" data-max="1.200000" x="245.00" y="336.00" width="566.67" height="17" rx="3" fill="#64748b"><title>mixed / gRPC / Off: 1.000</title></rect>
+<text x="819.67" y="349.00" class="value">1.000</text>
+<rect data-series="Observe" data-value="1.000000" data-max="1.200000" x="245.00" y="359.00" width="566.67" height="17" rx="3" fill="#2563eb"><title>mixed / gRPC / Observe: 1.000</title></rect>
+<text x="819.67" y="372.00" class="value">1.000</text>
+<rect data-series="Enforce" data-value="0.463889" data-max="1.200000" x="245.00" y="382.00" width="262.87" height="17" rx="3" fill="#0f766e"><title>mixed / gRPC / Enforce: 0.464</title></rect>
+<text x="515.87" y="395.00" class="value">0.464</text>
+<text x="30.00" y="447.00" class="label">mixed / HTTP</text>
+<text x="30.00" y="466.00" class="detail">1800 calls/mode; pooled trials</text>
+<rect data-series="Off" data-value="1.000000" data-max="1.200000" x="245.00" y="424.00" width="566.67" height="17" rx="3" fill="#64748b"><title>mixed / HTTP / Off: 1.000</title></rect>
+<text x="819.67" y="437.00" class="value">1.000</text>
+<rect data-series="Observe" data-value="1.000000" data-max="1.200000" x="245.00" y="447.00" width="566.67" height="17" rx="3" fill="#2563eb"><title>mixed / HTTP / Observe: 1.000</title></rect>
+<text x="819.67" y="460.00" class="value">1.000</text>
+<rect data-series="Enforce" data-value="0.506111" data-max="1.200000" x="245.00" y="470.00" width="286.80" height="17" rx="3" fill="#0f766e"><title>mixed / HTTP / Enforce: 0.506</title></rect>
+<text x="539.80" y="483.00" class="value">0.506</text>
+<text x="30.00" y="535.00" class="label">outage / gRPC</text>
+<text x="30.00" y="554.00" class="detail">1800 calls/mode; pooled trials</text>
+<rect data-series="Off" data-value="1.000000" data-max="1.200000" x="245.00" y="512.00" width="566.67" height="17" rx="3" fill="#64748b"><title>outage / gRPC / Off: 1.000</title></rect>
+<text x="819.67" y="525.00" class="value">1.000</text>
+<rect data-series="Observe" data-value="1.000000" data-max="1.200000" x="245.00" y="535.00" width="566.67" height="17" rx="3" fill="#2563eb"><title>outage / gRPC / Observe: 1.000</title></rect>
+<text x="819.67" y="548.00" class="value">1.000</text>
+<rect data-series="Enforce" data-value="0.452778" data-max="1.200000" x="245.00" y="558.00" width="256.57" height="17" rx="3" fill="#0f766e"><title>outage / gRPC / Enforce: 0.453</title></rect>
+<text x="509.57" y="571.00" class="value">0.453</text>
+<text x="30.00" y="623.00" class="label">outage / HTTP</text>
+<text x="30.00" y="642.00" class="detail">1800 calls/mode; pooled trials</text>
+<rect data-series="Off" data-value="1.000000" data-max="1.200000" x="245.00" y="600.00" width="566.67" height="17" rx="3" fill="#64748b"><title>outage / HTTP / Off: 1.000</title></rect>
+<text x="819.67" y="613.00" class="value">1.000</text>
+<rect data-series="Observe" data-value="1.000000" data-max="1.200000" x="245.00" y="623.00" width="566.67" height="17" rx="3" fill="#2563eb"><title>outage / HTTP / Observe: 1.000</title></rect>
+<text x="819.67" y="636.00" class="value">1.000</text>
+<rect data-series="Enforce" data-value="0.511111" data-max="1.200000" x="245.00" y="646.00" width="289.63" height="17" rx="3" fill="#0f766e"><title>outage / HTTP / Enforce: 0.511</title></rect>
+<text x="542.63" y="659.00" class="value">0.511</text>
+<text x="30.00" y="711.00" class="label">replicas / gRPC</text>
+<text x="30.00" y="730.00" class="detail">3600 calls/mode; pooled trials</text>
+<rect data-series="Off" data-value="1.000000" data-max="1.200000" x="245.00" y="688.00" width="566.67" height="17" rx="3" fill="#64748b"><title>replicas / gRPC / Off: 1.000</title></rect>
+<text x="819.67" y="701.00" class="value">1.000</text>
+<rect data-series="Observe" data-value="1.000000" data-max="1.200000" x="245.00" y="711.00" width="566.67" height="17" rx="3" fill="#2563eb"><title>replicas / gRPC / Observe: 1.000</title></rect>
+<text x="819.67" y="724.00" class="value">1.000</text>
+<rect data-series="Enforce" data-value="0.462222" data-max="1.200000" x="245.00" y="734.00" width="261.93" height="17" rx="3" fill="#0f766e"><title>replicas / gRPC / Enforce: 0.462</title></rect>
+<text x="514.93" y="747.00" class="value">0.462</text>
+<text x="30.00" y="799.00" class="label">replicas / HTTP</text>
+<text x="30.00" y="818.00" class="detail">3600 calls/mode; pooled trials</text>
+<rect data-series="Off" data-value="1.000000" data-max="1.200000" x="245.00" y="776.00" width="566.67" height="17" rx="3" fill="#64748b"><title>replicas / HTTP / Off: 1.000</title></rect>
+<text x="819.67" y="789.00" class="value">1.000</text>
+<rect data-series="Observe" data-value="1.000000" data-max="1.200000" x="245.00" y="799.00" width="566.67" height="17" rx="3" fill="#2563eb"><title>replicas / HTTP / Observe: 1.000</title></rect>
+<text x="819.67" y="812.00" class="value">1.000</text>
+<rect data-series="Enforce" data-value="0.531111" data-max="1.200000" x="245.00" y="822.00" width="300.96" height="17" rx="3" fill="#0f766e"><title>replicas / HTTP / Enforce: 0.531</title></rect>
+<text x="553.96" y="835.00" class="value">0.531</text>
+<text x="30.00" y="887.00" class="label">sparse / gRPC</text>
+<text x="30.00" y="906.00" class="detail">180 calls/mode; pooled trials</text>
+<rect data-series="Off" data-value="1.000000" data-max="1.200000" x="245.00" y="864.00" width="566.67" height="17" rx="3" fill="#64748b"><title>sparse / gRPC / Off: 1.000</title></rect>
+<text x="819.67" y="877.00" class="value">1.000</text>
+<rect data-series="Observe" data-value="1.000000" data-max="1.200000" x="245.00" y="887.00" width="566.67" height="17" rx="3" fill="#2563eb"><title>sparse / gRPC / Observe: 1.000</title></rect>
+<text x="819.67" y="900.00" class="value">1.000</text>
+<rect data-series="Enforce" data-value="1.000000" data-max="1.200000" x="245.00" y="910.00" width="566.67" height="17" rx="3" fill="#0f766e"><title>sparse / gRPC / Enforce: 1.000</title></rect>
+<text x="819.67" y="923.00" class="value">1.000</text>
+<text x="30.00" y="975.00" class="label">sparse / HTTP</text>
+<text x="30.00" y="994.00" class="detail">180 calls/mode; pooled trials</text>
+<rect data-series="Off" data-value="1.000000" data-max="1.200000" x="245.00" y="952.00" width="566.67" height="17" rx="3" fill="#64748b"><title>sparse / HTTP / Off: 1.000</title></rect>
+<text x="819.67" y="965.00" class="value">1.000</text>
+<rect data-series="Observe" data-value="1.000000" data-max="1.200000" x="245.00" y="975.00" width="566.67" height="17" rx="3" fill="#2563eb"><title>sparse / HTTP / Observe: 1.000</title></rect>
+<text x="819.67" y="988.00" class="value">1.000</text>
+<rect data-series="Enforce" data-value="1.000000" data-max="1.200000" x="245.00" y="998.00" width="566.67" height="17" rx="3" fill="#0f766e"><title>sparse / HTTP / Enforce: 1.000</title></rect>
+<text x="819.67" y="1011.00" class="value">1.000</text>
+<text x="30.00" y="1065.00" class="detail">Synthetic local evaluation. Exact counts and limitations are retained in the accompanying tables.</text>
+</svg>

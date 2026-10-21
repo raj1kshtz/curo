@@ -1,0 +1,91 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1120" height="909" viewBox="0 0 1120 909" role="img" aria-labelledby="title description">
+<title id="title">Successful calls during the fault phase</title>
+<desc id="description">Successful calls only; retries can help, while early timeout cuts can reduce success.</desc>
+<style>text{font-family:Arial,Helvetica,sans-serif;fill:#172033;font-size:13px}.title{font-size:24px;font-weight:700}.subtitle{font-size:14px;fill:#475569}.label{font-size:14px;font-weight:600}.detail{font-size:11px;fill:#475569}.tick{font-size:12px;fill:#475569}.value{font-size:12px;font-weight:600}.inside{fill:white;font-size:12px;font-weight:600}</style>
+<rect width="1120" height="909" fill="#ffffff"/>
+<text x="30.00" y="38.00" class="title">Successful calls during the fault phase</text>
+<text x="30.00" y="66.00" class="subtitle">Successful calls only; retries can help, while early timeout cuts can reduce success.</text>
+<rect x="245.00" y="91" width="12" height="12" rx="2" fill="#64748b"/>
+<text x="264.00" y="102.00" class="">Off</text>
+<rect x="430.00" y="91" width="12" height="12" rx="2" fill="#2563eb"/>
+<text x="449.00" y="102.00" class="">Observe</text>
+<rect x="615.00" y="91" width="12" height="12" rx="2" fill="#0f766e"/>
+<text x="634.00" y="102.00" class="">Enforce</text>
+<line x1="245.00" x2="245.00" y1="140" y2="859.00" stroke="#e2e8f0"/>
+<text x="235.00" y="131.00" class="tick">0%</text>
+<line x1="381.00" x2="381.00" y1="140" y2="859.00" stroke="#e2e8f0"/>
+<text x="371.00" y="131.00" class="tick">20%</text>
+<line x1="517.00" x2="517.00" y1="140" y2="859.00" stroke="#e2e8f0"/>
+<text x="507.00" y="131.00" class="tick">40%</text>
+<line x1="653.00" x2="653.00" y1="140" y2="859.00" stroke="#e2e8f0"/>
+<text x="643.00" y="131.00" class="tick">60%</text>
+<line x1="789.00" x2="789.00" y1="140" y2="859.00" stroke="#e2e8f0"/>
+<text x="779.00" y="131.00" class="tick">80%</text>
+<line x1="925.00" x2="925.00" y1="140" y2="859.00" stroke="#e2e8f0"/>
+<text x="915.00" y="131.00" class="tick">100%</text>
+<text x="30.00" y="183.00" class="label">healthy / gRPC</text>
+<text x="30.00" y="202.00" class="detail">800 calls/mode; pooled trials</text>
+<rect data-series="Off" data-value="100.000000" data-max="100.000000" x="245.00" y="160.00" width="680.00" height="17" rx="3" fill="#64748b"><title>healthy / gRPC / Off: 100.00%</title></rect>
+<text x="933.00" y="173.00" class="value">100.00%</text>
+<rect data-series="Observe" data-value="100.000000" data-max="100.000000" x="245.00" y="183.00" width="680.00" height="17" rx="3" fill="#2563eb"><title>healthy / gRPC / Observe: 100.00%</title></rect>
+<text x="933.00" y="196.00" class="value">100.00%</text>
+<rect data-series="Enforce" data-value="100.000000" data-max="100.000000" x="245.00" y="206.00" width="680.00" height="17" rx="3" fill="#0f766e"><title>healthy / gRPC / Enforce: 100.00%</title></rect>
+<text x="933.00" y="219.00" class="value">100.00%</text>
+<text x="30.00" y="271.00" class="label">healthy / HTTP</text>
+<text x="30.00" y="290.00" class="detail">800 calls/mode; pooled trials</text>
+<rect data-series="Off" data-value="100.000000" data-max="100.000000" x="245.00" y="248.00" width="680.00" height="17" rx="3" fill="#64748b"><title>healthy / HTTP / Off: 100.00%</title></rect>
+<text x="933.00" y="261.00" class="value">100.00%</text>
+<rect data-series="Observe" data-value="100.000000" data-max="100.000000" x="245.00" y="271.00" width="680.00" height="17" rx="3" fill="#2563eb"><title>healthy / HTTP / Observe: 100.00%</title></rect>
+<text x="933.00" y="284.00" class="value">100.00%</text>
+<rect data-series="Enforce" data-value="100.000000" data-max="100.000000" x="245.00" y="294.00" width="680.00" height="17" rx="3" fill="#0f766e"><title>healthy / HTTP / Enforce: 100.00%</title></rect>
+<text x="933.00" y="307.00" class="value">100.00%</text>
+<text x="30.00" y="359.00" class="label">rate-limit / gRPC</text>
+<text x="30.00" y="378.00" class="detail">1800 calls/mode; pooled trials</text>
+<rect data-series="Off" data-value="72.111111" data-max="100.000000" x="245.00" y="336.00" width="490.36" height="17" rx="3" fill="#64748b"><title>rate-limit / gRPC / Off: 72.11%</title></rect>
+<text x="743.36" y="349.00" class="value">72.11%</text>
+<rect data-series="Observe" data-value="72.111111" data-max="100.000000" x="245.00" y="359.00" width="490.36" height="17" rx="3" fill="#2563eb"><title>rate-limit / gRPC / Observe: 72.11%</title></rect>
+<text x="743.36" y="372.00" class="value">72.11%</text>
+<rect data-series="Enforce" data-value="72.111111" data-max="100.000000" x="245.00" y="382.00" width="490.36" height="17" rx="3" fill="#0f766e"><title>rate-limit / gRPC / Enforce: 72.11%</title></rect>
+<text x="743.36" y="395.00" class="value">72.11%</text>
+<text x="30.00" y="447.00" class="label">rate-limit / HTTP</text>
+<text x="30.00" y="466.00" class="detail">1800 calls/mode; pooled trials</text>
+<rect data-series="Off" data-value="72.111111" data-max="100.000000" x="245.00" y="424.00" width="490.36" height="17" rx="3" fill="#64748b"><title>rate-limit / HTTP / Off: 72.11%</title></rect>
+<text x="743.36" y="437.00" class="value">72.11%</text>
+<rect data-series="Observe" data-value="72.111111" data-max="100.000000" x="245.00" y="447.00" width="490.36" height="17" rx="3" fill="#2563eb"><title>rate-limit / HTTP / Observe: 72.11%</title></rect>
+<text x="743.36" y="460.00" class="value">72.11%</text>
+<rect data-series="Enforce" data-value="72.111111" data-max="100.000000" x="245.00" y="470.00" width="490.36" height="17" rx="3" fill="#0f766e"><title>rate-limit / HTTP / Enforce: 72.11%</title></rect>
+<text x="743.36" y="483.00" class="value">72.11%</text>
+<text x="30.00" y="535.00" class="label">slow / gRPC</text>
+<text x="30.00" y="554.00" class="detail">900 calls/mode; pooled trials</text>
+<rect data-series="Off" data-value="100.000000" data-max="100.000000" x="245.00" y="512.00" width="680.00" height="17" rx="3" fill="#64748b"><title>slow / gRPC / Off: 100.00%</title></rect>
+<text x="933.00" y="525.00" class="value">100.00%</text>
+<rect data-series="Observe" data-value="100.000000" data-max="100.000000" x="245.00" y="535.00" width="680.00" height="17" rx="3" fill="#2563eb"><title>slow / gRPC / Observe: 100.00%</title></rect>
+<text x="933.00" y="548.00" class="value">100.00%</text>
+<rect data-series="Enforce" data-value="97.666667" data-max="100.000000" x="245.00" y="558.00" width="664.13" height="17" rx="3" fill="#0f766e"><title>slow / gRPC / Enforce: 97.67%</title></rect>
+<text x="917.13" y="571.00" class="value">97.67%</text>
+<text x="30.00" y="623.00" class="label">slow / HTTP</text>
+<text x="30.00" y="642.00" class="detail">900 calls/mode; pooled trials</text>
+<rect data-series="Off" data-value="100.000000" data-max="100.000000" x="245.00" y="600.00" width="680.00" height="17" rx="3" fill="#64748b"><title>slow / HTTP / Off: 100.00%</title></rect>
+<text x="933.00" y="613.00" class="value">100.00%</text>
+<rect data-series="Observe" data-value="100.000000" data-max="100.000000" x="245.00" y="623.00" width="680.00" height="17" rx="3" fill="#2563eb"><title>slow / HTTP / Observe: 100.00%</title></rect>
+<text x="933.00" y="636.00" class="value">100.00%</text>
+<rect data-series="Enforce" data-value="97.555556" data-max="100.000000" x="245.00" y="646.00" width="663.38" height="17" rx="3" fill="#0f766e"><title>slow / HTTP / Enforce: 97.56%</title></rect>
+<text x="916.38" y="659.00" class="value">97.56%</text>
+<text x="30.00" y="711.00" class="label">transient / gRPC</text>
+<text x="30.00" y="730.00" class="detail">1800 calls/mode; pooled trials</text>
+<rect data-series="Off" data-value="94.666667" data-max="100.000000" x="245.00" y="688.00" width="643.73" height="17" rx="3" fill="#64748b"><title>transient / gRPC / Off: 94.67%</title></rect>
+<text x="896.73" y="701.00" class="value">94.67%</text>
+<rect data-series="Observe" data-value="94.666667" data-max="100.000000" x="245.00" y="711.00" width="643.73" height="17" rx="3" fill="#2563eb"><title>transient / gRPC / Observe: 94.67%</title></rect>
+<text x="896.73" y="724.00" class="value">94.67%</text>
+<rect data-series="Enforce" data-value="94.666667" data-max="100.000000" x="245.00" y="734.00" width="643.73" height="17" rx="3" fill="#0f766e"><title>transient / gRPC / Enforce: 94.67%</title></rect>
+<text x="896.73" y="747.00" class="value">94.67%</text>
+<text x="30.00" y="799.00" class="label">transient / HTTP</text>
+<text x="30.00" y="818.00" class="detail">1800 calls/mode; pooled trials</text>
+<rect data-series="Off" data-value="94.666667" data-max="100.000000" x="245.00" y="776.00" width="643.73" height="17" rx="3" fill="#64748b"><title>transient / HTTP / Off: 94.67%</title></rect>
+<text x="896.73" y="789.00" class="value">94.67%</text>
+<rect data-series="Observe" data-value="94.666667" data-max="100.000000" x="245.00" y="799.00" width="643.73" height="17" rx="3" fill="#2563eb"><title>transient / HTTP / Observe: 94.67%</title></rect>
+<text x="896.73" y="812.00" class="value">94.67%</text>
+<rect data-series="Enforce" data-value="99.944444" data-max="100.000000" x="245.00" y="822.00" width="679.62" height="17" rx="3" fill="#0f766e"><title>transient / HTTP / Enforce: 99.94%</title></rect>
+<text x="932.62" y="835.00" class="value">99.94%</text>
+<text x="30.00" y="889.00" class="detail">Synthetic local evaluation. Exact counts and limitations are retained in the accompanying tables.</text>
+</svg>

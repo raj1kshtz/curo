@@ -1,0 +1,105 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1120" height="815" viewBox="0 0 1120 815" role="img" aria-labelledby="title description">
+<title id="title">Healthy calls during the recovery phase</title>
+<desc id="description">Enforce mode only. Rejected calls are failures, not successful recovery.</desc>
+<style>text{font-family:Arial,Helvetica,sans-serif;fill:#172033;font-size:13px}.title{font-size:24px;font-weight:700}.subtitle{font-size:14px;fill:#475569}.label{font-size:14px;font-weight:600}.detail{font-size:11px;fill:#475569}.tick{font-size:12px;fill:#475569}.value{font-size:12px;font-weight:600}.inside{fill:white;font-size:12px;font-weight:600}</style>
+<rect width="1120" height="815" fill="#ffffff"/>
+<text x="30.00" y="38.00" class="title">Healthy calls during the recovery phase</text>
+<text x="30.00" y="66.00" class="subtitle">Enforce mode only. Rejected calls are failures, not successful recovery.</text>
+<rect x="245.00" y="91" width="12" height="12" rx="2" fill="#0f766e"/>
+<text x="264.00" y="102.00" class="">Successful</text>
+<rect x="430.00" y="91" width="12" height="12" rx="2" fill="#b45309"/>
+<text x="449.00" y="102.00" class="">Breaker rejected</text>
+<rect x="615.00" y="91" width="12" height="12" rx="2" fill="#64748b"/>
+<text x="634.00" y="102.00" class="">Other failure</text>
+<line x1="245.00" x2="245.00" y1="140" y2="765.00" stroke="#e2e8f0"/>
+<text x="235.00" y="131.00" class="tick">0%</text>
+<line x1="381.00" x2="381.00" y1="140" y2="765.00" stroke="#e2e8f0"/>
+<text x="371.00" y="131.00" class="tick">20%</text>
+<line x1="517.00" x2="517.00" y1="140" y2="765.00" stroke="#e2e8f0"/>
+<text x="507.00" y="131.00" class="tick">40%</text>
+<line x1="653.00" x2="653.00" y1="140" y2="765.00" stroke="#e2e8f0"/>
+<text x="643.00" y="131.00" class="tick">60%</text>
+<line x1="789.00" x2="789.00" y1="140" y2="765.00" stroke="#e2e8f0"/>
+<text x="779.00" y="131.00" class="tick">80%</text>
+<line x1="925.00" x2="925.00" y1="140" y2="765.00" stroke="#e2e8f0"/>
+<text x="915.00" y="131.00" class="tick">100%</text>
+<text x="30.00" y="180.00" class="label">burst / gRPC</text>
+<text x="30.00" y="197.00" class="detail">1600 recovery calls</text>
+<rect data-value="30.687500" x="245.00" y="165.00" width="208.68" height="27" fill="#0f766e"><title>burst / gRPC: 30.69%</title></rect>
+<text x="253.00" y="183.00" class="inside">30.69%</text>
+<rect data-value="69.312500" x="453.68" y="165.00" width="471.32" height="27" fill="#b45309"><title>burst / gRPC: 69.31%</title></rect>
+<text x="461.68" y="183.00" class="inside">69.31%</text>
+<rect data-value="0.000000" x="925.00" y="165.00" width="0.00" height="27" fill="#64748b"><title>burst / gRPC: 0.00%</title></rect>
+<text x="245.00" y="206.00" class="detail">Success 30.69% | Rejected 69.31% | Other 0.00%</text>
+<text x="30.00" y="241.00" class="label">burst / HTTP</text>
+<text x="30.00" y="258.00" class="detail">1600 recovery calls</text>
+<rect data-value="30.812500" x="245.00" y="226.00" width="209.53" height="27" fill="#0f766e"><title>burst / HTTP: 30.81%</title></rect>
+<text x="253.00" y="244.00" class="inside">30.81%</text>
+<rect data-value="69.187500" x="454.52" y="226.00" width="470.48" height="27" fill="#b45309"><title>burst / HTTP: 69.19%</title></rect>
+<text x="462.52" y="244.00" class="inside">69.19%</text>
+<rect data-value="0.000000" x="925.00" y="226.00" width="0.00" height="27" fill="#64748b"><title>burst / HTTP: 0.00%</title></rect>
+<text x="245.00" y="267.00" class="detail">Success 30.81% | Rejected 69.19% | Other 0.00%</text>
+<text x="30.00" y="302.00" class="label">mixed / gRPC</text>
+<text x="30.00" y="319.00" class="detail">1600 recovery calls</text>
+<rect data-value="66.750000" x="245.00" y="287.00" width="453.90" height="27" fill="#0f766e"><title>mixed / gRPC: 66.75%</title></rect>
+<text x="253.00" y="305.00" class="inside">66.75%</text>
+<rect data-value="33.250000" x="698.90" y="287.00" width="226.10" height="27" fill="#b45309"><title>mixed / gRPC: 33.25%</title></rect>
+<text x="706.90" y="305.00" class="inside">33.25%</text>
+<rect data-value="0.000000" x="925.00" y="287.00" width="0.00" height="27" fill="#64748b"><title>mixed / gRPC: 0.00%</title></rect>
+<text x="245.00" y="328.00" class="detail">Success 66.75% | Rejected 33.25% | Other 0.00%</text>
+<text x="30.00" y="363.00" class="label">mixed / HTTP</text>
+<text x="30.00" y="380.00" class="detail">1600 recovery calls</text>
+<rect data-value="66.687500" x="245.00" y="348.00" width="453.48" height="27" fill="#0f766e"><title>mixed / HTTP: 66.69%</title></rect>
+<text x="253.00" y="366.00" class="inside">66.69%</text>
+<rect data-value="33.312500" x="698.48" y="348.00" width="226.53" height="27" fill="#b45309"><title>mixed / HTTP: 33.31%</title></rect>
+<text x="706.48" y="366.00" class="inside">33.31%</text>
+<rect data-value="0.000000" x="925.00" y="348.00" width="0.00" height="27" fill="#64748b"><title>mixed / HTTP: 0.00%</title></rect>
+<text x="245.00" y="389.00" class="detail">Success 66.69% | Rejected 33.31% | Other 0.00%</text>
+<text x="30.00" y="424.00" class="label">outage / gRPC</text>
+<text x="30.00" y="441.00" class="detail">1600 recovery calls</text>
+<rect data-value="67.812500" x="245.00" y="409.00" width="461.12" height="27" fill="#0f766e"><title>outage / gRPC: 67.81%</title></rect>
+<text x="253.00" y="427.00" class="inside">67.81%</text>
+<rect data-value="32.187500" x="706.12" y="409.00" width="218.88" height="27" fill="#b45309"><title>outage / gRPC: 32.19%</title></rect>
+<text x="714.12" y="427.00" class="inside">32.19%</text>
+<rect data-value="0.000000" x="925.00" y="409.00" width="0.00" height="27" fill="#64748b"><title>outage / gRPC: 0.00%</title></rect>
+<text x="245.00" y="450.00" class="detail">Success 67.81% | Rejected 32.19% | Other 0.00%</text>
+<text x="30.00" y="485.00" class="label">outage / HTTP</text>
+<text x="30.00" y="502.00" class="detail">1600 recovery calls</text>
+<rect data-value="67.500000" x="245.00" y="470.00" width="459.00" height="27" fill="#0f766e"><title>outage / HTTP: 67.50%</title></rect>
+<text x="253.00" y="488.00" class="inside">67.50%</text>
+<rect data-value="32.500000" x="704.00" y="470.00" width="221.00" height="27" fill="#b45309"><title>outage / HTTP: 32.50%</title></rect>
+<text x="712.00" y="488.00" class="inside">32.50%</text>
+<rect data-value="0.000000" x="925.00" y="470.00" width="0.00" height="27" fill="#64748b"><title>outage / HTTP: 0.00%</title></rect>
+<text x="245.00" y="511.00" class="detail">Success 67.50% | Rejected 32.50% | Other 0.00%</text>
+<text x="30.00" y="546.00" class="label">replicas / gRPC</text>
+<text x="30.00" y="563.00" class="detail">3200 recovery calls</text>
+<rect data-value="66.750000" x="245.00" y="531.00" width="453.90" height="27" fill="#0f766e"><title>replicas / gRPC: 66.75%</title></rect>
+<text x="253.00" y="549.00" class="inside">66.75%</text>
+<rect data-value="33.250000" x="698.90" y="531.00" width="226.10" height="27" fill="#b45309"><title>replicas / gRPC: 33.25%</title></rect>
+<text x="706.90" y="549.00" class="inside">33.25%</text>
+<rect data-value="0.000000" x="925.00" y="531.00" width="0.00" height="27" fill="#64748b"><title>replicas / gRPC: 0.00%</title></rect>
+<text x="245.00" y="572.00" class="detail">Success 66.75% | Rejected 33.25% | Other 0.00%</text>
+<text x="30.00" y="607.00" class="label">replicas / HTTP</text>
+<text x="30.00" y="624.00" class="detail">3200 recovery calls</text>
+<rect data-value="66.468750" x="245.00" y="592.00" width="451.99" height="27" fill="#0f766e"><title>replicas / HTTP: 66.47%</title></rect>
+<text x="253.00" y="610.00" class="inside">66.47%</text>
+<rect data-value="33.531250" x="696.99" y="592.00" width="228.01" height="27" fill="#b45309"><title>replicas / HTTP: 33.53%</title></rect>
+<text x="704.99" y="610.00" class="inside">33.53%</text>
+<rect data-value="0.000000" x="925.00" y="592.00" width="0.00" height="27" fill="#64748b"><title>replicas / HTTP: 0.00%</title></rect>
+<text x="245.00" y="633.00" class="detail">Success 66.47% | Rejected 33.53% | Other 0.00%</text>
+<text x="30.00" y="668.00" class="label">sparse / gRPC</text>
+<text x="30.00" y="685.00" class="detail">160 recovery calls</text>
+<rect data-value="100.000000" x="245.00" y="653.00" width="680.00" height="27" fill="#0f766e"><title>sparse / gRPC: 100.00%</title></rect>
+<text x="253.00" y="671.00" class="inside">100.00%</text>
+<rect data-value="0.000000" x="925.00" y="653.00" width="0.00" height="27" fill="#b45309"><title>sparse / gRPC: 0.00%</title></rect>
+<rect data-value="0.000000" x="925.00" y="653.00" width="0.00" height="27" fill="#64748b"><title>sparse / gRPC: 0.00%</title></rect>
+<text x="245.00" y="694.00" class="detail">Success 100.00% | Rejected 0.00% | Other 0.00%</text>
+<text x="30.00" y="729.00" class="label">sparse / HTTP</text>
+<text x="30.00" y="746.00" class="detail">160 recovery calls</text>
+<rect data-value="100.000000" x="245.00" y="714.00" width="680.00" height="27" fill="#0f766e"><title>sparse / HTTP: 100.00%</title></rect>
+<text x="253.00" y="732.00" class="inside">100.00%</text>
+<rect data-value="0.000000" x="925.00" y="714.00" width="0.00" height="27" fill="#b45309"><title>sparse / HTTP: 0.00%</title></rect>
+<rect data-value="0.000000" x="925.00" y="714.00" width="0.00" height="27" fill="#64748b"><title>sparse / HTTP: 0.00%</title></rect>
+<text x="245.00" y="755.00" class="detail">Success 100.00% | Rejected 0.00% | Other 0.00%</text>
+<text x="30.00" y="795.00" class="detail">Synthetic local evaluation. Exact counts and limitations are retained in the accompanying tables.</text>
+</svg>

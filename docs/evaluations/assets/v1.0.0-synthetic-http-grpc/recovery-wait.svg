@@ -1,0 +1,74 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1120" height="735" viewBox="0 0 1120 735" role="img" aria-labelledby="title description">
+<title id="title">First successful call after scripted restoration</title>
+<desc id="description">Enforce range across replicas, method classes and trials; includes waiting for scheduled traffic.</desc>
+<style>text{font-family:Arial,Helvetica,sans-serif;fill:#172033;font-size:13px}.title{font-size:24px;font-weight:700}.subtitle{font-size:14px;fill:#475569}.label{font-size:14px;font-weight:600}.detail{font-size:11px;fill:#475569}.tick{font-size:12px;fill:#475569}.value{font-size:12px;font-weight:600}.inside{fill:white;font-size:12px;font-weight:600}</style>
+<rect width="1120" height="735" fill="#ffffff"/>
+<text x="30.00" y="38.00" class="title">First successful call after scripted restoration</text>
+<text x="30.00" y="66.00" class="subtitle">Enforce range across replicas, method classes and trials; includes waiting for scheduled traffic.</text>
+<text x="245.00" y="102.00" class="">Range, not a confidence interval. All values are seconds.</text>
+<line x1="245.00" x2="245.00" y1="140" y2="685.00" stroke="#e2e8f0"/>
+<text x="235.00" y="131.00" class="tick">0s</text>
+<line x1="358.33" x2="358.33" y1="140" y2="685.00" stroke="#e2e8f0"/>
+<text x="348.33" y="131.00" class="tick">10s</text>
+<line x1="471.67" x2="471.67" y1="140" y2="685.00" stroke="#e2e8f0"/>
+<text x="461.67" y="131.00" class="tick">20s</text>
+<line x1="585.00" x2="585.00" y1="140" y2="685.00" stroke="#e2e8f0"/>
+<text x="575.00" y="131.00" class="tick">30s</text>
+<line x1="698.33" x2="698.33" y1="140" y2="685.00" stroke="#e2e8f0"/>
+<text x="688.33" y="131.00" class="tick">40s</text>
+<line x1="811.67" x2="811.67" y1="140" y2="685.00" stroke="#e2e8f0"/>
+<text x="801.67" y="131.00" class="tick">50s</text>
+<line x1="925.00" x2="925.00" y1="140" y2="685.00" stroke="#e2e8f0"/>
+<text x="915.00" y="131.00" class="tick">60s</text>
+<text x="30.00" y="177.00" class="label">burst / gRPC</text>
+<line x1="872.98" x2="874.12" y1="172.00" y2="172.00" stroke="#0f766e" stroke-width="5"/>
+<circle cx="872.98" cy="172.00" r="4" fill="#0f766e"/>
+<circle cx="874.12" cy="172.00" r="4" fill="#0f766e"/>
+<text x="884.12" y="177.00" class="value">55.41-55.51s</text>
+<text x="30.00" y="230.00" class="label">burst / HTTP</text>
+<line x1="871.86" x2="872.99" y1="225.00" y2="225.00" stroke="#0f766e" stroke-width="5"/>
+<circle cx="871.86" cy="225.00" r="4" fill="#0f766e"/>
+<circle cx="872.99" cy="225.00" r="4" fill="#0f766e"/>
+<text x="882.99" y="230.00" class="value">55.31-55.41s</text>
+<text x="30.00" y="283.00" class="label">mixed / gRPC</text>
+<line x1="540.93" x2="560.19" y1="278.00" y2="278.00" stroke="#0f766e" stroke-width="5"/>
+<circle cx="540.93" cy="278.00" r="4" fill="#0f766e"/>
+<circle cx="560.19" cy="278.00" r="4" fill="#0f766e"/>
+<text x="570.19" y="283.00" class="value">26.11-27.81s</text>
+<text x="30.00" y="336.00" class="label">mixed / HTTP</text>
+<line x1="542.07" x2="560.18" y1="331.00" y2="331.00" stroke="#0f766e" stroke-width="5"/>
+<circle cx="542.07" cy="331.00" r="4" fill="#0f766e"/>
+<circle cx="560.18" cy="331.00" r="4" fill="#0f766e"/>
+<text x="570.18" y="336.00" class="value">26.21-27.81s</text>
+<text x="30.00" y="389.00" class="label">outage / gRPC</text>
+<line x1="536.38" x2="537.52" y1="384.00" y2="384.00" stroke="#0f766e" stroke-width="5"/>
+<circle cx="536.38" cy="384.00" r="4" fill="#0f766e"/>
+<circle cx="537.52" cy="384.00" r="4" fill="#0f766e"/>
+<text x="547.52" y="389.00" class="value">25.71-25.81s</text>
+<text x="30.00" y="442.00" class="label">outage / HTTP</text>
+<line x1="537.52" x2="542.05" y1="437.00" y2="437.00" stroke="#0f766e" stroke-width="5"/>
+<circle cx="537.52" cy="437.00" r="4" fill="#0f766e"/>
+<circle cx="542.05" cy="437.00" r="4" fill="#0f766e"/>
+<text x="552.05" y="442.00" class="value">25.81-26.21s</text>
+<text x="30.00" y="495.00" class="label">replicas / gRPC</text>
+<line x1="542.62" x2="552.82" y1="490.00" y2="490.00" stroke="#0f766e" stroke-width="5"/>
+<circle cx="542.62" cy="490.00" r="4" fill="#0f766e"/>
+<circle cx="552.82" cy="490.00" r="4" fill="#0f766e"/>
+<text x="562.82" y="495.00" class="value">26.26-27.16s</text>
+<text x="30.00" y="548.00" class="label">replicas / HTTP</text>
+<line x1="544.89" x2="553.39" y1="543.00" y2="543.00" stroke="#0f766e" stroke-width="5"/>
+<circle cx="544.89" cy="543.00" r="4" fill="#0f766e"/>
+<circle cx="553.39" cy="543.00" r="4" fill="#0f766e"/>
+<text x="563.39" y="548.00" class="value">26.46-27.21s</text>
+<text x="30.00" y="601.00" class="label">sparse / gRPC</text>
+<line x1="245.12" x2="324.46" y1="596.00" y2="596.00" stroke="#0f766e" stroke-width="5"/>
+<circle cx="245.12" cy="596.00" r="4" fill="#0f766e"/>
+<circle cx="324.46" cy="596.00" r="4" fill="#0f766e"/>
+<text x="334.46" y="601.00" class="value">0.01-7.01s</text>
+<text x="30.00" y="654.00" class="label">sparse / HTTP</text>
+<line x1="245.12" x2="324.46" y1="649.00" y2="649.00" stroke="#0f766e" stroke-width="5"/>
+<circle cx="245.12" cy="649.00" r="4" fill="#0f766e"/>
+<circle cx="324.46" cy="649.00" r="4" fill="#0f766e"/>
+<text x="334.46" y="654.00" class="value">0.01-7.01s</text>
+<text x="30.00" y="715.00" class="detail">Synthetic local evaluation. Exact counts and limitations are retained in the accompanying tables.</text>
+</svg>

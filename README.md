@@ -20,6 +20,21 @@ calls and database queries.
 > [ADR-0013](docs/adr/0013-unified-v1.md) records the module transition and
 > the v1 compatibility commitment. Published v0 releases remain unchanged.
 
+## Evaluation
+
+**[Read the v1.0.0 evaluation report and charts][evaluation].**
+
+A synthetic HTTP and unary gRPC evaluation compared `Off`, `Observe`, and
+`Enforce` across nine scenarios, 108 cases, and 234,120 offered requests.
+HTTP success under injected one-shot failures rose from 94.67% to 99.94%;
+burst error outages produced about 87-88% fewer downstream attempts.
+
+There are tradeoffs: steady and burst outage scenarios took about 26-56
+seconds to resume successful traffic after scripted restoration, and early
+timeout cuts reduced success in the slow-response scenario. These are local
+functional results, not proof of production capacity or real-user adoption.
+The test harness and raw evidence are private.
+
 ## Features
 
 - **Drop-in transport.** `curo.New` wraps any `http.RoundTripper`, and an
@@ -251,6 +266,7 @@ The operations guide lists the
 | Document | Contents |
 | --- | --- |
 | [Package documentation](https://pkg.go.dev/github.com/raj1kshtz/curo) | API reference and runnable examples |
+| [Evaluation report][evaluation] | Synthetic HTTP/gRPC workloads, measured benefits, recovery costs, and charts |
 | [curogrpc](curogrpc/README.md) | The gRPC client interceptor package: setup, targets, read-only methods, status codes, and limits |
 | [Operations guide](docs/guides/operations.md) | Wiring, HTTPS and HTTP/2, other calls through an `Engine`, deadlines, timeout bounds, rollout, monitoring, error handling, and incident behavior |
 | [Behavior reference](docs/reference/behavior.md) | How each mechanism behaves, its fixed values, and its known limits |
@@ -294,3 +310,4 @@ describes.
 [ci-badge]: https://github.com/raj1kshtz/curo/actions/workflows/ci.yml/badge.svg
 [ci-workflow]: https://github.com/raj1kshtz/curo/actions/workflows/ci.yml
 [license-badge]: https://img.shields.io/badge/license-Apache--2.0-blue.svg
+[evaluation]: docs/evaluations/v1.0.0-synthetic-http-grpc.md

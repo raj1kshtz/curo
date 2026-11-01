@@ -67,7 +67,7 @@ The test harness and raw evidence are private.
 ## Install
 
 ```sh
-go get github.com/raj1kshtz/curo@v1.0.0
+go get github.com/raj1kshtz/curo@v1.0.1
 ```
 
 Curo requires Go 1.26 or later. See the

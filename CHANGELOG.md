@@ -15,12 +15,26 @@ breaking change is listed with migration notes.
 
 ## [Unreleased]
 
+## [1.0.1] - 2026-11-01
+
 ### Added
 
 - A synthetic HTTP and unary gRPC evaluation for v1.0.0, with measured
   outcomes, recovery costs, workload methodology, and SVG charts. See the
   [evaluation report](docs/evaluations/v1.0.0-synthetic-http-grpc.md).
   The repository README summarizes the results and links to the full report.
+
+### Fixed
+
+- Preserve single-release ownership across copies of an internal retry-budget
+  reservation, including concurrent commit and cancellation. A reservation
+  can spend or return its token only once.
+
+### Changed
+
+- Successful retry-budget reservations allocate shared release state. This
+  adds one allocation per successful reservation; non-retry paths are
+  unchanged.
 
 ## [1.0.0] - 2026-10-19
 
@@ -154,7 +168,8 @@ The first release.
   gates, an API gate, full statement coverage, benchmarks, and tests on Go
   1.23, 1.26, and 1.27.
 
-[Unreleased]: https://github.com/raj1kshtz/curo/compare/v1.0.0...HEAD
+[Unreleased]: https://github.com/raj1kshtz/curo/compare/v1.0.1...HEAD
+[1.0.1]: https://github.com/raj1kshtz/curo/compare/v1.0.0...v1.0.1
 [1.0.0]: https://github.com/raj1kshtz/curo/compare/v0.2.0...v1.0.0
 [0.2.0]: https://github.com/raj1kshtz/curo/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/raj1kshtz/curo/releases/tag/v0.1.0

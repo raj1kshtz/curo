@@ -145,8 +145,8 @@ func TestLeaseCopiesReleaseOnce(t *testing.T) {
 	t.Parallel()
 
 	actions := []struct {
-		name    string
 		release func(*Lease)
+		name    string
 		refund  int64
 	}{
 		{name: "commit", release: (*Lease).Commit},

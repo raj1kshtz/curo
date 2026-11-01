@@ -1132,6 +1132,10 @@ empty. A reservation is held only from postflight to the commit check: the
 commit spends it just before the retry starts, and every other exit returns
 it.
 
+Copies of a reservation share atomic release ownership. Exactly one commit
+or cancellation updates both budgets; later releases do nothing, including
+when copies are released concurrently.
+
 The implemented eligibility rules are:
 
 - **Replay safety:** the method is `GET`, `HEAD`, `OPTIONS`, `TRACE`, or
@@ -1187,8 +1191,9 @@ runtime's random source; tests inject a fixed delay.
 
 `RetryAttempts` counts base transport calls that Curo starts for retries.
 Retries inside the base transport itself, such as `http.Transport` replaying a
-request after a reused connection fails, are not counted. A retry allocates
-its request clone and any replayed body.
+request after a reused connection fails, are not counted. A successful
+reservation allocates shared release state, even if its retry is later
+withdrawn. A retry also allocates its request clone and any replayed body.
 
 ### 15.2 Dependency Breaker
 
@@ -1684,6 +1689,8 @@ request to a target in the overflow aggregate also performs zero allocations.
 breaker rejection, and overflow paths with an attempt that allocates nothing,
 and a warm `Enforce` read with an adaptive timeout performs five allocations
 totaling 336 bytes. `TestEngineDoAllocations` holds these counts.
+Successful retry reservations add one allocation for shared release state
+(24 bytes on 64-bit platforms), including for `Engine.Do`.
 The allocation gates run without the race detector and coverage
 instrumentation, because both change allocation counts. Inputs that
 require case or IP normalization may use bounded transient allocation.

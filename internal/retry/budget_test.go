@@ -141,6 +141,113 @@ func TestLeaseReleasesItsReservationOnce(t *testing.T) {
 	}
 }
 
+func TestLeaseCopiesReleaseOnce(t *testing.T) {
+	t.Parallel()
+
+	actions := []struct {
+		release func(*Lease)
+		name    string
+		refund  int64
+	}{
+		{name: "commit", release: (*Lease).Commit},
+		{name: "cancel", release: (*Lease).Cancel, refund: milliTokensPerToken},
+	}
+	for _, first := range actions {
+		for _, second := range actions {
+			t.Run(first.name+"/"+second.name, func(t *testing.T) {
+				t.Parallel()
+
+				var target, instance Budget
+				for range 2 * DepositsPerToken {
+					Deposit(&target, &instance)
+				}
+				lease, reserved := Reserve(&target, &instance)
+				if !reserved {
+					t.Fatal("Reserve() = false, want true")
+				}
+				copied := lease
+				first.release(&lease)
+				second.release(&copied)
+				lease.Commit()
+				copied.Cancel()
+
+				if lease.Held() || copied.Held() {
+					t.Fatal("released copies still hold a reservation")
+				}
+				want := milliTokensPerToken + first.refund
+				assertBudgetState(t, "target after copied release", &target, want, 0)
+				assertBudgetState(t, "instance after copied release", &instance, want, 0)
+			})
+		}
+	}
+}
+
+func TestConcurrentLeaseReleaseOnce(t *testing.T) {
+	t.Parallel()
+
+	for _, ownership := range []string{"copies", "same lease"} {
+		for _, action := range []string{"commit", "cancel", "mixed"} {
+			t.Run(ownership+"/"+action, func(t *testing.T) {
+				t.Parallel()
+
+				var target, instance Budget
+				for range 2 * DepositsPerToken {
+					Deposit(&target, &instance)
+				}
+				lease, reserved := Reserve(&target, &instance)
+				if !reserved {
+					t.Fatal("Reserve() = false, want true")
+				}
+
+				const workers = 64
+				copies := make([]Lease, workers)
+				start := make(chan struct{})
+				var group sync.WaitGroup
+				for index := range copies {
+					copies[index] = lease
+					releasing := &copies[index]
+					if ownership == "same lease" {
+						releasing = &lease
+					}
+					group.Add(1)
+					go func() {
+						defer group.Done()
+						<-start
+						_ = releasing.Held()
+						if action == "cancel" || (action == "mixed" && index%2 == 0) {
+							releasing.Cancel()
+						} else {
+							releasing.Commit()
+						}
+						_ = releasing.Held()
+					}()
+				}
+				close(start)
+				group.Wait()
+
+				want := int64(milliTokensPerToken)
+				if action == "cancel" ||
+					(action == "mixed" && available(target.state.Load()) == 2*milliTokensPerToken) {
+					want *= 2
+				}
+				assertBudgetState(t, "target after concurrent release", &target, want, 0)
+				assertBudgetState(t, "instance after concurrent release", &instance, want, 0)
+				for index := range copies {
+					if copies[index].Held() {
+						t.Fatalf("copy %d still holds a released reservation", index)
+					}
+					copies[index].Commit()
+					copies[index].Cancel()
+				}
+				lease.Commit()
+				lease.Cancel()
+				assertBudgetState(t, "target after repeated copied release", &target, want, 0)
+				assertBudgetState(t, "instance after repeated copied release", &instance, want, 0)
+			})
+		}
+	}
+}
+
 func TestPendingReservationsKeepCapacityCounted(t *testing.T) {
 	t.Parallel()
 

@@ -16,7 +16,7 @@ HTTP-only applications do not compile the adapter's packages.
 ## Install
 
 ```sh
-go get github.com/raj1kshtz/curo@v1.0.0
+go get github.com/raj1kshtz/curo@v1.0.1
 ```
 
 The unified module requires Go 1.26 or later,
@@ -31,7 +31,7 @@ requirement before upgrading the root module:
 
 ```sh
 go mod edit -droprequire=github.com/raj1kshtz/curo/curogrpc
-go get github.com/raj1kshtz/curo@v1.0.0
+go get github.com/raj1kshtz/curo@v1.0.1
 go mod tidy
 ```
 

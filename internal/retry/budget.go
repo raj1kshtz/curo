@@ -39,10 +39,17 @@ type Budget struct {
 // Lease holds one retry token reserved from a target budget and an instance
 // budget. The zero Lease holds nothing. The first Commit or Cancel releases
 // the reservation, and later calls on that Lease do nothing. Copies of a held
-// Lease share its reservation, so exactly one copy may release it.
+// Lease share its reservation, so exactly one copy releases it. Held, Commit,
+// and Cancel may be called concurrently, including on the same Lease, as long
+// as the Lease is not reassigned.
 type Lease struct {
+	reservation *reservation
+}
+
+type reservation struct {
 	target   *Budget
 	instance *Budget
+	released atomic.Bool
 }
 
 // Deposit credits one recorded initial attempt to a target budget and its
@@ -54,7 +61,7 @@ func Deposit(target, instance *Budget) {
 
 // Reserve takes one retry token from both budgets, or from neither. The
 // target budget is reserved first and released again if the instance budget
-// is empty.
+// is empty. Success allocates shared release state for copies of the Lease.
 func Reserve(target, instance *Budget) (Lease, bool) {
 	if !target.reserve() {
 		return Lease{}, false
@@ -64,34 +71,32 @@ func Reserve(target, instance *Budget) (Lease, bool) {
 		return Lease{}, false
 	}
 
-	return Lease{target: target, instance: instance}, true
+	return Lease{reservation: &reservation{target: target, instance: instance}}, true
 }
 
 // Held reports whether lease still holds a reservation.
 func (lease *Lease) Held() bool {
-	return lease.target != nil
+	return lease.reservation != nil && !lease.reservation.released.Load()
 }
 
 // Commit spends the reserved token because its retry attempt is starting.
 func (lease *Lease) Commit() {
-	if lease.target == nil {
+	if lease.reservation == nil || !lease.reservation.released.CompareAndSwap(false, true) {
 		return
 	}
 
-	lease.target.commit()
-	lease.instance.commit()
-	*lease = Lease{}
+	lease.reservation.target.commit()
+	lease.reservation.instance.commit()
 }
 
 // Cancel returns the reserved token because its retry attempt will not start.
 func (lease *Lease) Cancel() {
-	if lease.target == nil {
+	if lease.reservation == nil || !lease.reservation.released.CompareAndSwap(false, true) {
 		return
 	}
 
-	lease.target.cancel()
-	lease.instance.cancel()
-	*lease = Lease{}
+	lease.reservation.target.cancel()
+	lease.reservation.instance.cancel()
 }
 
 func (budget *Budget) deposit(capacity int64) {

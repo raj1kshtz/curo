@@ -13,6 +13,9 @@ HTTP and gRPC support share one version, tag, changelog, and GitHub release.
 The module requires grpc-go and protobuf;
 HTTP-only applications do not compile the adapter's packages.
 
+Use the [versioned API reference][reference] to select the unified root
+module rather than the historical standalone adapter.
+
 ## Install
 
 ```sh
@@ -149,7 +152,7 @@ adapter's v0 history.
 [Apache License 2.0][license], as for the rest of the repository.
 
 [reference-badge]: https://pkg.go.dev/badge/github.com/raj1kshtz/curo/curogrpc.svg
-[reference]: https://pkg.go.dev/github.com/raj1kshtz/curo/curogrpc
+[reference]: https://pkg.go.dev/github.com/raj1kshtz/curo@v1.0.1/curogrpc
 [curo]: https://github.com/raj1kshtz/curo
 [rollout]: https://github.com/raj1kshtz/curo/blob/main/docs/guides/operations.md#roll-out-enforce
 [adr-0012]: https://github.com/raj1kshtz/curo/blob/main/docs/adr/0012-engine-and-adapter-modules.md

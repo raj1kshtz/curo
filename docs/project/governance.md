@@ -53,6 +53,10 @@ A maintainer makes a release in these steps:
    dated section for the new version and updates the comparison links. For a
    new minor or major version, it also updates the supported versions in
    [SECURITY.md](../../.github/SECURITY.md).
+   Update installation commands and explicit root-version gRPC API links in
+   both READMEs and `doc.go`, and the website's release version. Verify the
+   versioned gRPC documentation after indexing; the unversioned route may
+   select the historical standalone module.
 2. Check out the release commit, the head of `main`, in a clean worktree,
    and confirm that CI passed for it:
 

@@ -15,6 +15,12 @@ breaking change is listed with migration notes.
 
 ## [Unreleased]
 
+### Changed
+
+- Link gRPC API documentation to the published unified root-module version,
+  rather than the historical standalone adapter. Add a direct API link to
+  the root README and keep the versioned links in the release checklist.
+
 ## [1.0.1] - 2026-11-01
 
 ### Added

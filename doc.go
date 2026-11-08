@@ -94,5 +94,5 @@
 //
 // [operations guide]: https://github.com/raj1kshtz/curo/blob/main/docs/guides/operations.md
 // [behavior reference]: https://github.com/raj1kshtz/curo/blob/main/docs/reference/behavior.md
-// [curogrpc package]: https://pkg.go.dev/github.com/raj1kshtz/curo/curogrpc
+// [curogrpc package]: https://pkg.go.dev/github.com/raj1kshtz/curo@v1.0.1/curogrpc
 package curo

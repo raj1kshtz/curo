@@ -267,7 +267,7 @@ The operations guide lists the
 | --- | --- |
 | [Package documentation](https://pkg.go.dev/github.com/raj1kshtz/curo) | API reference and runnable examples |
 | [Evaluation report][evaluation] | Synthetic HTTP/gRPC workloads, measured benefits, recovery costs, and charts |
-| [curogrpc](curogrpc/README.md) | The gRPC client interceptor package: setup, targets, read-only methods, status codes, and limits |
+| [curogrpc setup](curogrpc/README.md) and [API reference][grpc-reference] | The gRPC client interceptor package: setup, targets, read-only methods, status codes, and limits |
 | [Operations guide](docs/guides/operations.md) | Wiring, HTTPS and HTTP/2, other calls through an `Engine`, deadlines, timeout bounds, rollout, monitoring, error handling, and incident behavior |
 | [Behavior reference](docs/reference/behavior.md) | How each mechanism behaves, its fixed values, and its known limits |
 | [Engine design](docs/design/engine.md) | Runtime architecture, safety boundaries, state ownership, and mitigation design |
@@ -307,6 +307,7 @@ describes.
 
 [reference-badge]: https://pkg.go.dev/badge/github.com/raj1kshtz/curo.svg
 [reference]: https://pkg.go.dev/github.com/raj1kshtz/curo
+[grpc-reference]: https://pkg.go.dev/github.com/raj1kshtz/curo@v1.0.1/curogrpc
 [ci-badge]: https://github.com/raj1kshtz/curo/actions/workflows/ci.yml/badge.svg
 [ci-workflow]: https://github.com/raj1kshtz/curo/actions/workflows/ci.yml
 [license-badge]: https://img.shields.io/badge/license-Apache--2.0-blue.svg
